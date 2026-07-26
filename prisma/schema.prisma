@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+
+
+generator client {
+  provider      = "prisma-client-js"
+  output   = "../src/generated/prisma"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String?
+  name      String
+  bio       String?
+  gender    String?
+  birthDate DateTime?
+  photos    String[]
+  
+  latitude  Float?
+  longitude Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  loginProvider LoginProvider
+
+  swipesGiven    Swipe[]   @relation("SwipesGiven")
+  swipesReceived Swipe[]   @relation("SwipesReceived")
+  matches1       Match[]   @relation("MatchUser1")
+  matches2       Match[]   @relation("MatchUser2")
+  messages       Message[]
+  tags           Tag[] @relation("UserTags")
+  analytics      Analytics?
+  posts          Post[]
+
+  tokens         Int @default(0)
+  superlikeTokens Int @default(0)
+  dmTokens       Int @default(0)
+}
+
+
+
+
+model Analytics {
+
+  id          String   @id @default(uuid())
+
+  userId      String   @unique
+
+  profileViews Int      @default(0)
+
+  likes        Int      @default(0)
+
+  superLikes   Int      @default(0)
+
+  dislikes     Int      @default(0)
+
+  matches      Int      @default(0)
+
+  unmatches    Int      @default(0)
+
+  createdAt    DateTime @default(now())
+
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+}
+
+
+model Tag{
+  id String @id @default(uuid())
+  name String @unique
+  category String?
+  users User[] @relation("UserTags")
+}
+
+enum LoginProvider {
+  EMAIL
+  GOOGLE
+}
+
+enum SwipeType {
+  LIKE
+  DISLIKE
+  SUPERLIKE
+}
+
+model Swipe {
+  id         String    @id @default(uuid())
+  swiperId   String
+  swipedId   String
+  type       SwipeType
+  createdAt  DateTime  @default(now())
+
+  swiper     User      @relation("SwipesGiven", fields: [swiperId], references: [id], onDelete: Cascade)
+  swiped     User      @relation("SwipesReceived", fields: [swipedId], references: [id], onDelete: Cascade)
+
+  @@unique([swiperId, swipedId])
+}
+
+model Match {
+  id        String   @id @default(uuid())
+  user1Id   String
+  user2Id   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  unmatchedAt DateTime?
+  isUnmatched Boolean @default(false)
+
+  user1     User      @relation("MatchUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2     User      @relation("MatchUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+  messages  Message[]
+  
+  @@unique([user1Id, user2Id])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  matchId   String
+  senderId  String
+  content   String
+  createdAt DateTime @default(now())
+  isRead    Boolean  @default(false)
+
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model Post {
+  id        String   @id @default(uuid())
+  authorId  String
+  content   String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,25 @@
+type Match {
+  id: ID!
+  user1Id: String!
+  user2Id: String!
+  createdAt: String
+  updatedAt: String
+  unmatchedAt: String
+  isUnmatched: Boolean
+}
+
+type Query {
+  getUserMatches(userId: ID!): [Match!]
+  matches: [Match!]
+}
+
+type SwipeResult {
+  match: Match
+  user: User!
+}   
+
+type Mutation {
+  createMatch(user2Id: ID!): Match
+  unmatch(id: ID!): Match
+  swipe(swipedId: ID!, type: String!): SwipeResult!
+}
