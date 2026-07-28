@@ -96,5 +96,45 @@ export const feedResolvers = {
       const usersMap = new Map(users.map((u) => [u.id, u]));
       return validSwiperIds.map((id) => usersMap.get(id)).filter(Boolean);
     },
+    getPendingRequestsCount: async (_: any, __: any, context: MyContext) => {
+      if (!context.userId) {
+        throw new Error("Not Authenticated");
+      }
+
+      // Find all incoming likes/superlikes
+      const incomingSwipes = await prisma.swipe.findMany({
+        where: {
+          swipedId: context.userId,
+          type: { in: ["LIKE", "SUPERLIKE"] },
+        },
+        select: { swiperId: true }
+      });
+
+      if (incomingSwipes.length === 0) return 0;
+
+      // Find existing matches to filter out
+      const matches = await prisma.match.findMany({
+        where: {
+          OR: [{ user1Id: context.userId }, { user2Id: context.userId }],
+        },
+      });
+
+      const matchedUserIds = matches.map((m) =>
+        m.user1Id === context.userId ? m.user2Id : m.user1Id
+      );
+
+      // We only want users we haven't matched with yet
+      // Also we shouldn't have swiped them yet
+      const mySwipes = await prisma.swipe.findMany({
+        where: { swiperId: context.userId },
+        select: { swipedId: true }
+      });
+      const swipedUserIds = mySwipes.map((s) => s.swipedId);
+      
+      const excludeIds = new Set([...matchedUserIds, ...swipedUserIds]);
+      const count = incomingSwipes.filter((s) => !excludeIds.has(s.swiperId)).length;
+      
+      return count;
+    },
   },
 };

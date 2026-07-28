@@ -10,7 +10,7 @@ export function generateToken(user_data: {
     throw new Error("JWT_SECRET is not defined");
   }
   const token = jwt.sign(user_data, process.env.JWT_SECRET, {
-    expiresIn: "1h",
+    expiresIn: "30d",
   });
 
   return token;

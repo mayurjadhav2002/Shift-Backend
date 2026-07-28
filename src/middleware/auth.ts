@@ -14,8 +14,8 @@ export const getUserContext = (authHeader?: string): MyContext => {
   if (!token) return {};
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-    return { userId: decoded.userId };
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    return { userId: decoded.id };
   } catch (error) {
     console.error("JWT Verification Error:", error);
     return {};

@@ -1,4 +1,5 @@
 type Query {
   getFeed(limit: Int, offset: Int): [User!]
   getRequests: [User!]
+  getPendingRequestsCount: Int!
 }

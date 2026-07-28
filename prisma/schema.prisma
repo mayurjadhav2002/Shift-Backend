@@ -29,6 +29,26 @@ model User {
   latitude  Float?
   longitude Float?
 
+  isVerified Boolean @default(false)
+  prompts    Json?
+  jobTitle   String?
+  company    String?
+  school     String?
+  languages  String[]
+  zodiac     String?
+  familyPlans String?
+  covidVaccine String?
+  personalityType String?
+  communicationStyle String?
+  loveStyle  String?
+  pets       String?
+  drinking   String?
+
+  instagram  String?
+  snapchat   String?
+  twitter    String?
+  showSocials Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -46,6 +66,10 @@ model User {
   tokens         Int @default(0)
   superlikeTokens Int @default(0)
   dmTokens       Int @default(0)
+  rewindTokens   Int @default(0)
+
+  lastRewardClaimDate DateTime?
+  rewardDayCounter    Int @default(0)
 }
 
 

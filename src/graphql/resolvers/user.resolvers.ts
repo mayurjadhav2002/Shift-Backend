@@ -17,37 +17,60 @@ export const userResolvers = {
     users: async () => {
       return await prisma.user.findMany();
     },
+
     getProfile: async (_: any, args: { id: string; isView: boolean }) => {
-      let fieldSelects: string[] = [
-        "id",
-        "name",
-        "bio",
-        "gender",
-        "birthDate",
-        "photos",
-        "tags",
-      ];
-      if (!args.isView) {
-        fieldSelects.push(
-          "email",
-          "latitude",
-          "longitude",
-          "createdAt",
-          "updatedAt",
-        );
-      }
-      return await prisma.user.findUnique({
+      const user: any = await prisma.user.findUnique({
         where: { id: args.id },
-        select: {
-          ...(fieldSelects.reduce(
-            (acc, field) => {
-              acc[field] = true;
-              return acc;
-            },
-            {} as Record<string, boolean>,
-          ) as any),
-        },
+        include: { tags: true },
       });
+      if (!user) return null;
+
+      if (args.isView) {
+        // Hide private fields when viewing someone else's profile
+        user.email = "";
+        user.latitude = null;
+        user.longitude = null;
+      }
+
+      if (user.prompts && typeof user.prompts === "object") {
+        user.prompts = JSON.stringify(user.prompts) as any;
+      }
+
+      if (user.tags) {
+        user.tags = user.tags.map((t: any) => t.name);
+      }
+
+      return user;
+    },
+    getDailyRewardStatus: async (_: any, __: any, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      const user = await prisma.user.findUnique({
+        where: { id: context.userId },
+        select: { lastRewardClaimDate: true, rewardDayCounter: true },
+      });
+      if (!user) throw new Error("User not found");
+
+      const now = new Date();
+      let canClaimToday = true;
+
+      if (user.lastRewardClaimDate) {
+        const lastClaim = new Date(user.lastRewardClaimDate);
+        if (
+          lastClaim.getFullYear() === now.getFullYear() &&
+          lastClaim.getMonth() === now.getMonth() &&
+          lastClaim.getDate() === now.getDate()
+        ) {
+          canClaimToday = false;
+        }
+      }
+
+      let nextRewardDay = (user.rewardDayCounter % 7) + 1;
+
+      return {
+        nextRewardDay,
+        canClaimToday,
+        serverTime: now.toISOString(),
+      };
     },
   },
   Mutation: {
@@ -80,7 +103,7 @@ export const userResolvers = {
       } else if (picture && (!user.photos || user.photos.length === 0)) {
         user = await prisma.user.update({
           where: { email },
-          data: { photos: [picture] }
+          data: { photos: [picture] },
         });
       }
 
@@ -89,7 +112,7 @@ export const userResolvers = {
         email: user.email,
         createdAt: new Date(),
       });
-      
+
       return { user, accessToken: token };
     },
     createUser: async (
@@ -136,22 +159,102 @@ export const userResolvers = {
     },
     updateUser: async (
       _: any,
-      args: { id: string; email?: string; password?: string; name?: string; bio?: string; gender?: string; birthDate?: string; photos?: string[]; latitude?: number; longitude?: number },
+      args: {
+        id: string;
+        email?: string;
+        password?: string;
+        name?: string;
+        bio?: string;
+        gender?: string;
+        birthDate?: string;
+        photos?: string[];
+        latitude?: number;
+        longitude?: number;
+        isVerified?: boolean;
+        prompts?: string;
+        jobTitle?: string;
+        company?: string;
+        school?: string;
+        languages?: string[];
+        zodiac?: string;
+        familyPlans?: string;
+        covidVaccine?: string;
+        personalityType?: string;
+        communicationStyle?: string;
+        loveStyle?: string;
+        pets?: string;
+        drinking?: string;
+        tags?: string[];
+        instagram?: string;
+        snapchat?: string;
+        twitter?: string;
+        showSocials?: boolean;
+      },
     ) => {
-      return await prisma.user.update({
+      const user = await prisma.user.update({
         where: { id: args.id },
         data: {
           ...(args.email && { email: args.email }),
           ...(args.password && { password: args.password }),
           ...(args.name && { name: args.name }),
-          ...(args.bio && { bio: args.bio }),
-          ...(args.gender && { gender: args.gender }),
+          ...(args.bio !== undefined && { bio: args.bio }),
+          ...(args.gender !== undefined && { gender: args.gender }),
           ...(args.birthDate && { birthDate: new Date(args.birthDate) }),
-          ...(args.photos && { photos: args.photos }),
+          ...(args.photos !== undefined && { photos: args.photos }),
           ...(args.latitude !== undefined && { latitude: args.latitude }),
           ...(args.longitude !== undefined && { longitude: args.longitude }),
+          ...(args.isVerified !== undefined && { isVerified: args.isVerified }),
+          ...(args.prompts !== undefined && {
+            prompts: args.prompts ? JSON.parse(args.prompts) : null,
+          }),
+          ...(args.jobTitle !== undefined && { jobTitle: args.jobTitle }),
+          ...(args.company !== undefined && { company: args.company }),
+          ...(args.school !== undefined && { school: args.school }),
+          ...(args.languages !== undefined && { languages: args.languages }),
+          ...(args.zodiac !== undefined && { zodiac: args.zodiac }),
+          ...(args.familyPlans !== undefined && {
+            familyPlans: args.familyPlans,
+          }),
+          ...(args.covidVaccine !== undefined && {
+            covidVaccine: args.covidVaccine,
+          }),
+          ...(args.personalityType !== undefined && {
+            personalityType: args.personalityType,
+          }),
+          ...(args.communicationStyle !== undefined && {
+            communicationStyle: args.communicationStyle,
+          }),
+          ...(args.loveStyle !== undefined && { loveStyle: args.loveStyle }),
+          ...(args.pets !== undefined && { pets: args.pets }),
+          ...(args.drinking !== undefined && { drinking: args.drinking }),
+          ...(args.instagram !== undefined && { instagram: args.instagram }),
+          ...(args.snapchat !== undefined && { snapchat: args.snapchat }),
+          ...(args.twitter !== undefined && { twitter: args.twitter }),
+          ...(args.showSocials !== undefined && {
+            showSocials: args.showSocials,
+          }),
+          ...(args.tags !== undefined && {
+            tags: {
+              set: [], // clears existing tags
+              connectOrCreate: args.tags.map((tag) => ({
+                where: { name: tag },
+                create: { name: tag },
+              })),
+            },
+          }),
         },
+        include: { tags: true },
       });
+
+      if (user.prompts && typeof user.prompts === "object") {
+        user.prompts = JSON.stringify(user.prompts) as any;
+      }
+
+      if ((user as any).tags) {
+        (user as any).tags = (user as any).tags.map((t: any) => t.name);
+      }
+
+      return user;
     },
     deleteUser: async (_: any, args: { id: string }) => {
       return await prisma.user.delete({
@@ -181,7 +284,7 @@ export const userResolvers = {
         email: user.email,
         createdAt: new Date(),
       });
-      return { user, accessToken: token }; // Return format based on what client expects, though type is User! in schema. 
+      return { user, accessToken: token }; // Return format based on what client expects, though type is User! in schema.
       // Wait, in schema `createUser` returns `User!`, but here it returns `{ user, accessToken: token }`. I will just return user, as per schema.
     },
     logout: async () => {
@@ -200,13 +303,59 @@ export const userResolvers = {
         data: { tokens: { increment: args.amount } },
       });
     },
-    uploadPhoto: async (_: any, args: { base64: string }, context: MyContext) => {
+    claimDailyReward: async (_: any, __: any, context: MyContext) => {
       if (!context.userId) throw new Error("Not Authenticated");
-      
+      const user = await prisma.user.findUnique({
+        where: { id: context.userId },
+      });
+      if (!user) throw new Error("User not found");
+
+      const now = new Date();
+
+      if (user.lastRewardClaimDate) {
+        const lastClaim = new Date(user.lastRewardClaimDate);
+        if (
+          lastClaim.getFullYear() === now.getFullYear() &&
+          lastClaim.getMonth() === now.getMonth() &&
+          lastClaim.getDate() === now.getDate()
+        ) {
+          throw new Error("Already claimed today");
+        }
+      }
+
+      const nextRewardDay = (user.rewardDayCounter % 7) + 1;
+
+      let updateData: any = {
+        lastRewardClaimDate: now,
+        rewardDayCounter: nextRewardDay,
+      };
+
+      if (nextRewardDay === 1) updateData.tokens = { increment: 50 };
+      if (nextRewardDay === 2) updateData.superlikeTokens = { increment: 1 };
+      if (nextRewardDay === 3) updateData.tokens = { increment: 100 };
+      if (nextRewardDay === 4) updateData.dmTokens = { increment: 1 };
+      if (nextRewardDay === 5) updateData.tokens = { increment: 150 };
+      if (nextRewardDay === 6) updateData.rewindTokens = { increment: 2 };
+      if (nextRewardDay === 7) updateData.tokens = { increment: 250 };
+
+      return await prisma.user.update({
+        where: { id: context.userId },
+        data: updateData,
+      });
+    },
+    uploadPhoto: async (
+      _: any,
+      args: { base64: string },
+      context: MyContext,
+    ) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+
       const { base64 } = args;
       // Ensure the string has the data URI prefix if it doesn't already
-      const fileStr = base64.startsWith('data:image') ? base64 : `data:image/jpeg;base64,${base64}`;
-      
+      const fileStr = base64.startsWith("data:image")
+        ? base64
+        : `data:image/jpeg;base64,${base64}`;
+
       try {
         const result = await cloudinary.uploader.upload(fileStr, {
           folder: `shift/users/${context.userId}`,
@@ -218,29 +367,29 @@ export const userResolvers = {
     },
     deletePhoto: async (_: any, args: { url: string }, context: MyContext) => {
       if (!context.userId) throw new Error("Not Authenticated");
-      
+
       try {
         // Extract public ID from URL
         // Example URL: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/shift/users/123/image_name.jpg
-        const parts = args.url.split('/');
+        const parts = args.url.split("/");
         const fileWithExt = parts.pop();
         if (!fileWithExt) return false;
-        
-        const fileName = fileWithExt.split('.')[0];
-        
+
+        const fileName = fileWithExt.split(".")[0];
+
         // Find the index of the folder to reconstruct the full public_id
-        const folderIndex = parts.indexOf('shift');
+        const folderIndex = parts.indexOf("shift");
         if (folderIndex === -1) {
           // Fallback if the folder structure is different
           await cloudinary.uploader.destroy(fileName);
           return true;
         }
-        
-        const folderPath = parts.slice(folderIndex).join('/');
+
+        const folderPath = parts.slice(folderIndex).join("/");
         const publicId = `${folderPath}/${fileName}`;
-        
+
         const result = await cloudinary.uploader.destroy(publicId);
-        return result.result === 'ok';
+        return result.result === "ok";
       } catch (error: any) {
         throw new Error(`Failed to delete photo: ${error.message}`);
       }
@@ -275,7 +424,11 @@ export const userResolvers = {
     hasSuperlikedMe: async (parent: any, _: any, context: MyContext) => {
       if (!context.userId) return false;
       const swipe = await prisma.swipe.findFirst({
-        where: { swiperId: parent.id, swipedId: context.userId, type: "SUPERLIKE" },
+        where: {
+          swiperId: parent.id,
+          swipedId: context.userId,
+          type: "SUPERLIKE",
+        },
       });
       return !!swipe;
     },
