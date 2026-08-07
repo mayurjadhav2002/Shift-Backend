@@ -4,8 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.matchResolvers = void 0;
-const prisma_1 = __importDefault(require("@/utils/prisma"));
-const notifications_1 = require("@/utils/helpers/notifications");
+const prisma_1 = __importDefault(require("../../utils/prisma"));
+const notifications_1 = require("../../utils/helpers/notifications");
 exports.matchResolvers = {
     Query: {
         matches: async () => {
@@ -54,8 +54,16 @@ exports.matchResolvers = {
                 throw new Error("Not Authenticated");
             const matches = await prisma_1.default.match.findMany({
                 where: {
-                    OR: [{ user1Id: context.userId }, { user2Id: context.userId }],
-                    isUnmatched: false
+                    AND: [
+                        { OR: [{ user1Id: context.userId }, { user2Id: context.userId }] },
+                        { isUnmatched: false },
+                        {
+                            OR: [
+                                { dmStatus: null },
+                                { dmStatus: { not: "REJECTED" } },
+                            ],
+                        },
+                    ],
                 },
                 include: {
                     user1: true,
@@ -174,7 +182,7 @@ exports.matchResolvers = {
                     await (0, notifications_1.sendNotification)(args.swipedId, "New Match!", "You have a new match!");
                     // Notify sockets
                     try {
-                        const { getIO } = require("@/socket");
+                        const { getIO } = require("../../socket");
                         const io = getIO();
                         io.to(`user_${context.userId}`).emit("new_match", match);
                         io.to(`user_${args.swipedId}`).emit("new_match", match);
@@ -254,16 +262,24 @@ exports.matchResolvers = {
             }
             const user = await prisma_1.default.user.findUnique({
                 where: { id: context.userId },
-                select: { dmTokens: true },
+                select: { dmTokens: true, tokens: true, isPremium: true },
             });
-            if (!user || user.dmTokens < 1) {
-                throw new Error("Insufficient Direct Chat credits");
+            if (!user || (!user.isPremium && user.dmTokens < 1 && user.tokens < 10)) {
+                throw new Error("Insufficient chat tokens to send direct message");
             }
-            // Deduct 1 dmToken
-            await prisma_1.default.user.update({
-                where: { id: context.userId },
-                data: { dmTokens: { decrement: 1 } },
-            });
+            // Deduct 1 dmToken or 10 chat tokens if not premium
+            if (user.dmTokens >= 1) {
+                await prisma_1.default.user.update({
+                    where: { id: context.userId },
+                    data: { dmTokens: { decrement: 1 } },
+                });
+            }
+            else if (!user.isPremium && user.tokens >= 10) {
+                await prisma_1.default.user.update({
+                    where: { id: context.userId },
+                    data: { tokens: { decrement: 10 } },
+                });
+            }
             // Check if match already exists
             let match = await prisma_1.default.match.findFirst({
                 where: {
@@ -299,6 +315,18 @@ exports.matchResolvers = {
                     },
                 });
             }
+            // Create initial text message if provided
+            let initialMessage = null;
+            if (args.content && args.content.trim()) {
+                initialMessage = await prisma_1.default.message.create({
+                    data: {
+                        matchId: match.id,
+                        senderId: context.userId,
+                        content: args.content.trim(),
+                        isRead: false,
+                    },
+                });
+            }
             // Automatically create a Swipe so target user won't appear in feed again
             try {
                 await prisma_1.default.swipe.upsert({
@@ -319,12 +347,18 @@ exports.matchResolvers = {
             catch (err) {
                 console.error("Error upserting swipe for Direct DM", err);
             }
-            await (0, notifications_1.sendNotification)(args.targetUserId, "Direct Message!", "Someone connected with you through Direct DM!");
+            await (0, notifications_1.sendNotification)(args.targetUserId, "New Direct Message! 💌", args.content ? `${args.content}` : "Someone sent you a direct chat request!");
             try {
-                const { getIO } = require("@/socket");
+                const { getIO } = require("../../socket");
                 const io = getIO();
                 io.to(`user_${context.userId}`).emit("new_direct_dm", match);
                 io.to(`user_${args.targetUserId}`).emit("new_direct_dm", match);
+                if (initialMessage) {
+                    io.to(`user_${context.userId}`).emit("receive_message", initialMessage);
+                    io.to(`user_${args.targetUserId}`).emit("receive_message", initialMessage);
+                    io.to(`user_${context.userId}`).emit("new_message", initialMessage);
+                    io.to(`user_${args.targetUserId}`).emit("new_message", initialMessage);
+                }
             }
             catch (e) {
                 console.error("Socket error on direct DM", e);
@@ -352,7 +386,7 @@ exports.matchResolvers = {
                 },
             });
             try {
-                const { getIO } = require("@/socket");
+                const { getIO } = require("../../socket");
                 const io = getIO();
                 io.to(`user_${match.user1Id}`).to(`user_${match.user2Id}`).emit("dm_updated", { matchId: args.matchId, dmStatus: "ACCEPTED" });
             }
@@ -376,8 +410,12 @@ exports.matchResolvers = {
                     dmStatus: "REJECTED",
                 },
             });
+            // Delete all messages associated with this match upon rejection
+            await prisma_1.default.message.deleteMany({
+                where: { matchId: args.matchId },
+            });
             try {
-                const { getIO } = require("@/socket");
+                const { getIO } = require("../../socket");
                 const io = getIO();
                 io.to(`user_${match.user1Id}`).to(`user_${match.user2Id}`).emit("dm_updated", { matchId: args.matchId, dmStatus: "REJECTED", isUnmatched: true });
             }

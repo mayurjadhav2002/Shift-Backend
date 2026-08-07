@@ -1,6 +1,6 @@
 import prisma from "@/utils/prisma";
 import { MyContext } from "@/middleware/auth";
-import { SwipeType } from "@/generated/prisma/enums";
+import { SwipeType } from "@prisma/client";
 import { sendNotification } from "@/utils/helpers/notifications";
 
 export const matchResolvers = {

@@ -1,0 +1,62 @@
+type Match {
+  id: ID!
+  user1Id: String!
+  user2Id: String!
+  createdAt: String
+  updatedAt: String
+  unmatchedAt: String
+  isUnmatched: Boolean
+  isDirectDM: Boolean
+  dmStatus: String
+  dmSenderId: String
+}
+
+type Query {
+  getUserMatches(userId: ID!): [Match!]
+  matches: [Match!]
+  getMessages(matchId: ID!, limit: Int, cursor: ID): [Message!]
+  getChats: [ChatPreview!]!
+}
+
+type ChatPreview {
+  id: ID!
+  matchedUser: User!
+  lastMessage: Message
+  unreadCount: Int!
+  updatedAt: String!
+  isDirectDM: Boolean
+  dmStatus: String
+  dmSenderId: String
+}
+
+type Message {
+  id: ID!
+  matchId: String!
+  senderId: String!
+  content: String!
+  imageUrl: String
+  gifUrl: String
+  replyToId: String
+  replyToContent: String
+  replyToSenderName: String
+  replyToType: String
+  createdAt: String
+  isRead: Boolean
+  isRevealed: Boolean
+}
+
+type SwipeResult {
+  match: Match
+  user: User!
+}   
+
+type Mutation {
+  createMatch(user2Id: ID!): Match
+  unmatch(id: ID!): Match
+  swipe(swipedId: ID!, type: String!): SwipeResult!
+  revealMessageStatus(messageId: ID!): Boolean!
+  markChatAsRead(matchId: ID!): Boolean!
+  createDirectDM(targetUserId: ID!, content: String): SwipeResult!
+  acceptDirectDM(matchId: ID!): Match!
+  rejectDirectDM(matchId: ID!): Boolean!
+}

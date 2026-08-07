@@ -1,0 +1,28 @@
+type Swipe {
+  id: ID!
+  swiperId: String!
+  swipedId: String!
+  type: String!
+  createdAt: String
+}
+
+type Message {
+  id: ID!
+  matchId: String!
+  senderId: String!
+  content: String!
+  imageUrl: String
+  gifUrl: String
+  createdAt: String
+  isRead: Boolean
+  isRevealed: Boolean
+}
+
+type Post {
+  id: ID!
+  authorId: String!
+  content: String!
+  imageUrl: String
+  createdAt: String
+  updatedAt: String
+}

@@ -97,7 +97,7 @@ const setupSocketServer = (httpServer) => {
         // Send Message
         socket.on("send_message", async (data) => {
             try {
-                const { matchId, content, imageUrl, gifUrl, tempId } = data;
+                const { matchId, content, imageUrl, gifUrl, tempId, replyToId, replyToContent, replyToSenderName, replyToType } = data;
                 // Verify sender token balance if not premium
                 const sender = await prisma_1.default.user.findUnique({
                     where: { id: userId },
@@ -125,6 +125,10 @@ const setupSocketServer = (httpServer) => {
                         content: content || "",
                         imageUrl,
                         gifUrl,
+                        replyToId,
+                        replyToContent,
+                        replyToSenderName,
+                        replyToType,
                     },
                     include: {
                         sender: {

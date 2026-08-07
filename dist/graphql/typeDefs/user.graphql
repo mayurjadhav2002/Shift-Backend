@@ -1,0 +1,154 @@
+type User {
+  id: ID!
+  email: String!
+  name: String!
+  bio: String
+  gender: String
+  birthDate: String
+  photos: [String!]
+  latitude: Float
+  longitude: Float
+  
+  isVerified: Boolean
+  isPremium: Boolean
+  prompts: String
+  jobTitle: String
+  company: String
+  school: String
+  languages: [String!]
+  zodiac: String
+  familyPlans: String
+  covidVaccine: String
+  personalityType: String
+  communicationStyle: String
+  loveStyle: String
+  pets: String
+  drinking: String
+  tags: [String!]
+
+  instagram: String
+  snapchat: String
+  twitter: String
+  showSocials: Boolean
+
+  createdAt: String
+  updatedAt: String
+  lastActive: String
+  matches1: [Match!]
+  matches2: [Match!]
+  messages: [Message!]
+  posts: [Post!]
+  swipesGiven: [Swipe!]
+  swipesReceived: [Swipe!]
+  tokens: Int
+  superlikeTokens: Int
+  dmTokens: Int
+  rewindTokens: Int
+  hasLikedMe: Boolean
+  hasSuperlikedMe: Boolean
+
+  lastRewardClaimDate: String
+  rewardDayCounter: Int
+
+  isMatched: Boolean
+  matchId: ID
+
+  country: String
+  preferredCountry: String
+  isPaused: Boolean
+  premiumUntil: String
+  subscriptionPlan: String
+  platformReceipt: String
+  iapPlatform: String
+  analytics: Analytics
+}
+
+type Analytics {
+  profileViews: Int!
+  likesReceived: Int!
+  superlikesReceived: Int!
+  swipesReceivedCount: Int!
+}
+
+type DailyRewardStatus {
+  nextRewardDay: Int!
+  canClaimToday: Boolean!
+  serverTime: String!
+}
+
+type BlockedUserInfo {
+  id: ID!
+  blockedId: ID!
+  name: String!
+  avatar: String
+  reason: String
+  createdAt: String!
+}
+
+type Query {
+  users: [User!]
+  getProfile(id: ID!, isView: Boolean): User!
+  getDailyRewardStatus: DailyRewardStatus!
+  getBlockedUsers: [BlockedUserInfo!]!
+}
+
+type AuthPayload {
+  user: User!
+  accessToken: String!
+}
+
+type Mutation {
+  loginWithGoogle(idToken: String!): AuthPayload!
+  createUser(email: String!, password: String!, name: String!): AuthPayload!
+  signUp(email: String!, password: String!, name: String!): AuthPayload!
+  updateUser(
+    id: ID!
+    email: String
+    password: String
+    name: String
+    bio: String
+    gender: String
+    birthDate: String
+    photos: [String!]
+    latitude: Float
+    longitude: Float
+    isVerified: Boolean
+    prompts: String
+    jobTitle: String
+    company: String
+    school: String
+    languages: [String!]
+    zodiac: String
+    familyPlans: String
+    covidVaccine: String
+    personalityType: String
+    communicationStyle: String
+    loveStyle: String
+    pets: String
+    drinking: String
+    tags: [String!]
+    instagram: String
+    snapchat: String
+    twitter: String
+    showSocials: Boolean
+    country: String
+    preferredCountry: String
+    isPaused: Boolean
+  ): User!
+  logout: Boolean!
+  deleteAccount: User!
+  addTokens(amount: Int!): User!
+  claimDailyReward: User!
+
+  deleteUser(id: ID!): User!
+  uploadPhoto(base64: String!): String!
+  deletePhoto(url: String!): Boolean!
+
+  unmatchUser(userId: ID!): Boolean!
+  blockUser(userId: ID!, reason: String): Boolean!
+  unblockUser(userId: ID!): Boolean!
+  reportUser(userId: ID!, reason: String!): Boolean!
+  suggestFeature(title: String!, description: String!, category: String): Boolean!
+  upgradeToPremium(plan: String!, receipt: String!, platform: String!, productId: String, amount: Float): User!
+  restorePremium: User!
+}

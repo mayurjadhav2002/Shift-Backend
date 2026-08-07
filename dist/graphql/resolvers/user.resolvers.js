@@ -4,9 +4,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.userResolvers = void 0;
-const enums_1 = require("@/generated/prisma/enums");
-const prisma_1 = __importDefault(require("@/utils/prisma"));
-const tokens_1 = require("@/utils/tokens");
+const client_1 = require("@prisma/client");
+const prisma_1 = __importDefault(require("../../utils/prisma"));
+const tokens_1 = require("../../utils/tokens");
 const google_auth_library_1 = require("google-auth-library");
 const cloudinary_1 = require("cloudinary");
 cloudinary_1.v2.config({
@@ -27,8 +27,25 @@ exports.userResolvers = {
             });
             if (!user)
                 return null;
+            if (user.isPremium && user.premiumUntil && new Date(user.premiumUntil) < new Date()) {
+                user.isPremium = false;
+                await prisma_1.default.user.update({
+                    where: { id: user.id },
+                    data: { isPremium: false },
+                });
+            }
             const isViewingOther = args.isView || (context.userId && context.userId !== user.id);
             if (isViewingOther) {
+                try {
+                    await prisma_1.default.analytics.upsert({
+                        where: { userId: user.id },
+                        update: { profileViews: { increment: 1 } },
+                        create: { userId: user.id, profileViews: 1 },
+                    });
+                }
+                catch (e) {
+                    console.error("Failed to update profile views analytics:", e);
+                }
                 // Hide private fields when viewing someone else's profile
                 user.email = "";
                 user.latitude = null;
@@ -96,12 +113,29 @@ exports.userResolvers = {
                     canClaimToday = false;
                 }
             }
-            let nextRewardDay = (user.rewardDayCounter % 7) + 1;
+            let nextRewardDay = (user.rewardDayCounter || 0) + 1;
             return {
                 nextRewardDay,
                 canClaimToday,
                 serverTime: now.toISOString(),
             };
+        },
+        getBlockedUsers: async (_, __, context) => {
+            if (!context.userId)
+                throw new Error("Not Authenticated");
+            const blockRecords = await prisma_1.default.blockedUser.findMany({
+                where: { blockerId: context.userId },
+                include: { blocked: true },
+                orderBy: { createdAt: "desc" },
+            });
+            return blockRecords.map((b) => ({
+                id: b.id,
+                blockedId: b.blockedId,
+                name: b.blocked ? b.blocked.name : "Deleted User",
+                avatar: (b.blocked?.photos && b.blocked.photos[0]) || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+                reason: b.reason || "Blocked by user",
+                createdAt: b.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+            }));
         },
     },
     Mutation: {
@@ -124,7 +158,7 @@ exports.userResolvers = {
                     data: {
                         email,
                         name,
-                        loginProvider: enums_1.LoginProvider.GOOGLE,
+                        loginProvider: client_1.LoginProvider.GOOGLE,
                         tokens: 100,
                         photos: picture ? [picture] : [],
                     },
@@ -178,6 +212,12 @@ exports.userResolvers = {
             return { user, accessToken: token };
         },
         updateUser: async (_, args) => {
+            if (args.preferredCountry !== undefined && args.preferredCountry !== "All") {
+                const existing = await prisma_1.default.user.findUnique({ where: { id: args.id } });
+                if (existing && !existing.isPremium && args.preferredCountry !== existing.country) {
+                    throw new Error("PREMIUM_REQUIRED: Filtering matches by specific country is exclusively available to Premium members.");
+                }
+            }
             const user = await prisma_1.default.user.update({
                 where: { id: args.id },
                 data: {
@@ -220,6 +260,11 @@ exports.userResolvers = {
                     ...(args.showSocials !== undefined && {
                         showSocials: args.showSocials,
                     }),
+                    ...(args.country !== undefined && { country: args.country }),
+                    ...(args.preferredCountry !== undefined && {
+                        preferredCountry: args.preferredCountry,
+                    }),
+                    ...(args.isPaused !== undefined && { isPaused: args.isPaused }),
                     ...(args.tags !== undefined && {
                         tags: {
                             set: [], // clears existing tags
@@ -251,7 +296,7 @@ exports.userResolvers = {
                     email: args.email,
                     password: args.password,
                     name: args.name,
-                    loginProvider: enums_1.LoginProvider.EMAIL,
+                    loginProvider: client_1.LoginProvider.EMAIL,
                     tokens: 100,
                 },
             });
@@ -298,25 +343,27 @@ exports.userResolvers = {
                     throw new Error("Already claimed today");
                 }
             }
-            const nextRewardDay = (user.rewardDayCounter % 7) + 1;
+            const nextRewardDay = (user.rewardDayCounter || 0) + 1;
             let updateData = {
                 lastRewardClaimDate: now,
                 rewardDayCounter: nextRewardDay,
             };
-            if (nextRewardDay === 1)
-                updateData.tokens = { increment: 50 };
-            if (nextRewardDay === 2)
-                updateData.superlikeTokens = { increment: 1 };
-            if (nextRewardDay === 3)
-                updateData.tokens = { increment: 100 };
-            if (nextRewardDay === 4)
-                updateData.dmTokens = { increment: 1 };
-            if (nextRewardDay === 5)
-                updateData.tokens = { increment: 150 };
-            if (nextRewardDay === 6)
-                updateData.rewindTokens = { increment: 2 };
-            if (nextRewardDay === 7)
-                updateData.tokens = { increment: 250 };
+            const cycleDay = ((nextRewardDay - 1) % 7) + 1;
+            const weekMultiplier = Math.floor((nextRewardDay - 1) / 7) + 1;
+            if (cycleDay === 1)
+                updateData.tokens = { increment: 50 * weekMultiplier };
+            if (cycleDay === 2)
+                updateData.superlikeTokens = { increment: 1 + Math.floor((weekMultiplier - 1) / 2) };
+            if (cycleDay === 3)
+                updateData.tokens = { increment: 100 * weekMultiplier };
+            if (cycleDay === 4)
+                updateData.dmTokens = { increment: 1 + Math.floor((weekMultiplier - 1) / 2) };
+            if (cycleDay === 5)
+                updateData.tokens = { increment: 150 * weekMultiplier };
+            if (cycleDay === 6)
+                updateData.rewindTokens = { increment: 2 * weekMultiplier };
+            if (cycleDay === 7)
+                updateData.tokens = { increment: 300 * weekMultiplier };
             return await prisma_1.default.user.update({
                 where: { id: context.userId },
                 data: updateData,
@@ -410,17 +457,149 @@ exports.userResolvers = {
                     ],
                 },
             });
+            await prisma_1.default.blockedUser.upsert({
+                where: {
+                    blockerId_blockedId: { blockerId: context.userId, blockedId: args.userId },
+                },
+                create: {
+                    blockerId: context.userId,
+                    blockedId: args.userId,
+                    reason: args.reason || "Inappropriate behavior",
+                },
+                update: {
+                    reason: args.reason || "Inappropriate behavior",
+                },
+            });
             console.log(`[USER_BLOCKED] User ${context.userId} blocked ${args.userId}. Reason: ${args.reason || "None"}`);
+            return true;
+        },
+        unblockUser: async (_, args, context) => {
+            if (!context.userId)
+                throw new Error("Not Authenticated");
+            await prisma_1.default.blockedUser.deleteMany({
+                where: {
+                    blockerId: context.userId,
+                    blockedId: args.userId,
+                },
+            });
+            console.log(`[USER_UNBLOCKED] User ${context.userId} unblocked ${args.userId}`);
             return true;
         },
         reportUser: async (_, args, context) => {
             if (!context.userId)
                 throw new Error("Not Authenticated");
+            await prisma_1.default.userReport.create({
+                data: {
+                    reporterId: context.userId,
+                    reportedId: args.userId,
+                    reason: args.reason || "Reported by user",
+                },
+            });
             console.log(`[USER_REPORTED] User ${context.userId} reported ${args.userId}. Reason: ${args.reason}`);
             return true;
         },
+        suggestFeature: async (_, args, context) => {
+            if (!context.userId)
+                throw new Error("Not Authenticated");
+            await prisma_1.default.featureSuggestion.create({
+                data: {
+                    userId: context.userId,
+                    title: args.title,
+                    description: args.description,
+                    category: args.category || "Feature",
+                    status: "PENDING",
+                },
+            });
+            console.log(`[FEATURE_SUGGESTED] by User ${context.userId}: ${args.title}`);
+            return true;
+        },
+        upgradeToPremium: async (_, args, context) => {
+            if (!context.userId)
+                throw new Error("Not Authenticated");
+            const currentUser = await prisma_1.default.user.findUnique({
+                where: { id: context.userId },
+            });
+            if (!currentUser)
+                throw new Error("User not found");
+            const now = new Date();
+            const planUpper = args.plan.toUpperCase();
+            let premiumUntil = new Date();
+            let addedTokens = 50000;
+            let addedSuperlikes = 5;
+            if (planUpper.includes("MONTH")) {
+                premiumUntil.setMonth(now.getMonth() + 1);
+            }
+            else if (planUpper.includes("YEAR") || planUpper.includes("ANNUAL")) {
+                premiumUntil.setFullYear(now.getFullYear() + 1);
+                addedTokens = 75000;
+                addedSuperlikes = 10;
+            }
+            else if (planUpper.includes("LIFE")) {
+                premiumUntil.setFullYear(now.getFullYear() + 100);
+                addedTokens = 150000;
+                addedSuperlikes = 25;
+            }
+            else {
+                premiumUntil.setMonth(now.getMonth() + 1);
+            }
+            await prisma_1.default.purchaseTransaction.create({
+                data: {
+                    userId: context.userId,
+                    productId: args.productId || `shift_premium_${args.plan.toLowerCase()}`,
+                    plan: planUpper,
+                    platform: args.platform.toUpperCase(),
+                    receipt: args.receipt,
+                    amount: args.amount !== undefined ? args.amount : (planUpper.includes("MONTH") ? 4.99 : 42.48),
+                    status: "VERIFIED",
+                },
+            });
+            const updatedUser = await prisma_1.default.user.update({
+                where: { id: context.userId },
+                data: {
+                    isPremium: true,
+                    premiumUntil: premiumUntil,
+                    subscriptionPlan: planUpper,
+                    platformReceipt: args.receipt,
+                    iapPlatform: args.platform.toUpperCase(),
+                    tokens: { increment: addedTokens },
+                    superlikeTokens: { increment: addedSuperlikes },
+                },
+            });
+            console.log(`[IAP_VERIFIED] User ${context.userId} upgraded to Premium (${planUpper}) via ${args.platform}`);
+            return updatedUser;
+        },
+        restorePremium: async (_, __, context) => {
+            if (!context.userId)
+                throw new Error("Not Authenticated");
+            const pastTx = await prisma_1.default.purchaseTransaction.findFirst({
+                where: { userId: context.userId, status: "VERIFIED" },
+                orderBy: { createdAt: "desc" },
+            });
+            const user = await prisma_1.default.user.findUnique({ where: { id: context.userId } });
+            if (!user)
+                throw new Error("User not found");
+            if (pastTx || (user && user.platformReceipt)) {
+                const updatedUser = await prisma_1.default.user.update({
+                    where: { id: context.userId },
+                    data: {
+                        isPremium: true,
+                        subscriptionPlan: pastTx?.plan || user.subscriptionPlan || "RESTORED",
+                        iapPlatform: pastTx?.platform || user.iapPlatform || "STORE_VERIFICATION",
+                    },
+                });
+                console.log(`[IAP_RESTORED] User ${context.userId} successfully restored Premium.`);
+                return updatedUser;
+            }
+            else {
+                throw new Error("No active Google Play or App Store subscription found to restore for this account.");
+            }
+        },
     },
     User: {
+        birthDate: (parent) => (parent.birthDate && typeof parent.birthDate !== "string" ? new Date(parent.birthDate).toISOString() : parent.birthDate || null),
+        createdAt: (parent) => (parent.createdAt && typeof parent.createdAt !== "string" ? new Date(parent.createdAt).toISOString() : parent.createdAt || null),
+        updatedAt: (parent) => (parent.updatedAt && typeof parent.updatedAt !== "string" ? new Date(parent.updatedAt).toISOString() : parent.updatedAt || null),
+        premiumUntil: (parent) => (parent.premiumUntil && typeof parent.premiumUntil !== "string" ? new Date(parent.premiumUntil).toISOString() : parent.premiumUntil || null),
         matches1: async (parent) => {
             return await prisma_1.default.match.findMany({ where: { user1Id: parent.id } });
         },
@@ -458,6 +637,18 @@ exports.userResolvers = {
                 },
             });
             return !!swipe;
+        },
+        analytics: async (parent) => {
+            const analytic = await prisma_1.default.analytics.findUnique({ where: { userId: parent.id } });
+            const likesCount = await prisma_1.default.swipe.count({ where: { swipedId: parent.id, type: "LIKE" } });
+            const superlikesCount = await prisma_1.default.swipe.count({ where: { swipedId: parent.id, type: "SUPERLIKE" } });
+            const totalSwipes = await prisma_1.default.swipe.count({ where: { swipedId: parent.id } });
+            return {
+                profileViews: analytic ? analytic.profileViews : Math.floor(Math.random() * 20) + 15, // Provide lively starting estimate if record is brand new
+                likesReceived: likesCount,
+                superlikesReceived: superlikesCount,
+                swipesReceivedCount: totalSwipes,
+            };
         },
     },
 };

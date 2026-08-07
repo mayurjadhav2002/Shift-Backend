@@ -1,4 +1,4 @@
-import { LoginProvider } from "@/generated/prisma/enums";
+import { LoginProvider } from "@prisma/client";
 import prisma from "@/utils/prisma";
 import { generateToken } from "@/utils/tokens";
 import { MyContext } from "@/middleware/auth";
