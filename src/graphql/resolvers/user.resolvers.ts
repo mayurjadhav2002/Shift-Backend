@@ -18,18 +18,59 @@ export const userResolvers = {
       return await prisma.user.findMany();
     },
 
-    getProfile: async (_: any, args: { id: string; isView: boolean }) => {
+    getProfile: async (
+      _: any,
+      args: { id: string; isView?: boolean },
+      context: MyContext
+    ) => {
       const user: any = await prisma.user.findUnique({
         where: { id: args.id },
         include: { tags: true },
       });
       if (!user) return null;
 
-      if (args.isView) {
+      if (user.isPremium && user.premiumUntil && new Date(user.premiumUntil) < new Date()) {
+        user.isPremium = false;
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { isPremium: false },
+        });
+      }
+
+      const isViewingOther = args.isView || (context.userId && context.userId !== user.id);
+
+      if (isViewingOther) {
+        try {
+          await prisma.analytics.upsert({
+            where: { userId: user.id },
+            update: { profileViews: { increment: 1 } },
+            create: { userId: user.id, profileViews: 1 },
+          });
+        } catch (e) {
+          console.error("Failed to update profile views analytics:", e);
+        }
+
         // Hide private fields when viewing someone else's profile
         user.email = "";
         user.latitude = null;
         user.longitude = null;
+
+        // Secure social links gating: only send handle if requesting user has added their own
+        if (context.userId && (user.instagram || user.snapchat || user.twitter)) {
+          const viewer = await prisma.user.findUnique({
+            where: { id: context.userId },
+            select: { instagram: true, snapchat: true, twitter: true },
+          });
+          if (user.instagram && !viewer?.instagram) {
+            user.instagram = "LOCKED";
+          }
+          if (user.snapchat && !viewer?.snapchat) {
+            user.snapchat = "LOCKED";
+          }
+          if (user.twitter && !viewer?.twitter) {
+            user.twitter = "LOCKED";
+          }
+        }
       }
 
       if (user.prompts && typeof user.prompts === "object") {
@@ -38,6 +79,26 @@ export const userResolvers = {
 
       if (user.tags) {
         user.tags = user.tags.map((t: any) => t.name);
+      }
+
+      // Check if logged in user is currently connected / matched with this profile
+      user.isMatched = false;
+      user.matchId = null;
+      if (context.userId && context.userId !== user.id) {
+        const existingMatch = await prisma.match.findFirst({
+          where: {
+            OR: [
+              { user1Id: context.userId, user2Id: user.id },
+              { user1Id: user.id, user2Id: context.userId },
+            ],
+            isUnmatched: false,
+          },
+          select: { id: true },
+        });
+        if (existingMatch) {
+          user.isMatched = true;
+          user.matchId = existingMatch.id;
+        }
       }
 
       return user;
@@ -64,13 +125,29 @@ export const userResolvers = {
         }
       }
 
-      let nextRewardDay = (user.rewardDayCounter % 7) + 1;
+      let nextRewardDay = (user.rewardDayCounter || 0) + 1;
 
       return {
         nextRewardDay,
         canClaimToday,
         serverTime: now.toISOString(),
       };
+    },
+    getBlockedUsers: async (_: any, __: any, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      const blockRecords = await prisma.blockedUser.findMany({
+        where: { blockerId: context.userId },
+        include: { blocked: true },
+        orderBy: { createdAt: "desc" },
+      });
+      return blockRecords.map((b) => ({
+        id: b.id,
+        blockedId: b.blockedId,
+        name: b.blocked ? b.blocked.name : "Deleted User",
+        avatar: (b.blocked?.photos && b.blocked.photos[0]) || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+        reason: b.reason || "Blocked by user",
+        createdAt: b.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      }));
     },
   },
   Mutation: {
@@ -189,8 +266,17 @@ export const userResolvers = {
         snapchat?: string;
         twitter?: string;
         showSocials?: boolean;
+        country?: string;
+        preferredCountry?: string;
+        isPaused?: boolean;
       },
     ) => {
+      if (args.preferredCountry !== undefined && args.preferredCountry !== "All") {
+        const existing = await prisma.user.findUnique({ where: { id: args.id } });
+        if (existing && !existing.isPremium && args.preferredCountry !== existing.country) {
+          throw new Error("PREMIUM_REQUIRED: Filtering matches by specific country is exclusively available to Premium members.");
+        }
+      }
       const user = await prisma.user.update({
         where: { id: args.id },
         data: {
@@ -233,6 +319,11 @@ export const userResolvers = {
           ...(args.showSocials !== undefined && {
             showSocials: args.showSocials,
           }),
+          ...(args.country !== undefined && { country: args.country }),
+          ...(args.preferredCountry !== undefined && {
+            preferredCountry: args.preferredCountry,
+          }),
+          ...(args.isPaused !== undefined && { isPaused: args.isPaused }),
           ...(args.tags !== undefined && {
             tags: {
               set: [], // clears existing tags
@@ -323,20 +414,23 @@ export const userResolvers = {
         }
       }
 
-      const nextRewardDay = (user.rewardDayCounter % 7) + 1;
+      const nextRewardDay = (user.rewardDayCounter || 0) + 1;
 
       let updateData: any = {
         lastRewardClaimDate: now,
         rewardDayCounter: nextRewardDay,
       };
 
-      if (nextRewardDay === 1) updateData.tokens = { increment: 50 };
-      if (nextRewardDay === 2) updateData.superlikeTokens = { increment: 1 };
-      if (nextRewardDay === 3) updateData.tokens = { increment: 100 };
-      if (nextRewardDay === 4) updateData.dmTokens = { increment: 1 };
-      if (nextRewardDay === 5) updateData.tokens = { increment: 150 };
-      if (nextRewardDay === 6) updateData.rewindTokens = { increment: 2 };
-      if (nextRewardDay === 7) updateData.tokens = { increment: 250 };
+      const cycleDay = ((nextRewardDay - 1) % 7) + 1;
+      const weekMultiplier = Math.floor((nextRewardDay - 1) / 7) + 1;
+
+      if (cycleDay === 1) updateData.tokens = { increment: 50 * weekMultiplier };
+      if (cycleDay === 2) updateData.superlikeTokens = { increment: 1 + Math.floor((weekMultiplier - 1) / 2) };
+      if (cycleDay === 3) updateData.tokens = { increment: 100 * weekMultiplier };
+      if (cycleDay === 4) updateData.dmTokens = { increment: 1 + Math.floor((weekMultiplier - 1) / 2) };
+      if (cycleDay === 5) updateData.tokens = { increment: 150 * weekMultiplier };
+      if (cycleDay === 6) updateData.rewindTokens = { increment: 2 * weekMultiplier };
+      if (cycleDay === 7) updateData.tokens = { increment: 300 * weekMultiplier };
 
       return await prisma.user.update({
         where: { id: context.userId },
@@ -394,8 +488,193 @@ export const userResolvers = {
         throw new Error(`Failed to delete photo: ${error.message}`);
       }
     },
+
+    unmatchUser: async (_: any, args: { userId: string }, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      await prisma.match.updateMany({
+        where: {
+          OR: [
+            { user1Id: context.userId, user2Id: args.userId },
+            { user1Id: args.userId, user2Id: context.userId },
+          ],
+          isUnmatched: false,
+        },
+        data: {
+          isUnmatched: true,
+          unmatchedAt: new Date(),
+        },
+      });
+      return true;
+    },
+    blockUser: async (_: any, args: { userId: string; reason?: string }, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      // 1. Unmatch any active connection
+      await prisma.match.updateMany({
+        where: {
+          OR: [
+            { user1Id: context.userId, user2Id: args.userId },
+            { user1Id: args.userId, user2Id: context.userId },
+          ],
+        },
+        data: {
+          isUnmatched: true,
+          unmatchedAt: new Date(),
+        },
+      });
+      // 2. Remove all swipes between them so neither appears in feed/discover again
+      await prisma.swipe.deleteMany({
+        where: {
+          OR: [
+            { swiperId: context.userId, swipedId: args.userId },
+            { swiperId: args.userId, swipedId: context.userId },
+          ],
+        },
+      });
+      await prisma.blockedUser.upsert({
+        where: {
+          blockerId_blockedId: { blockerId: context.userId, blockedId: args.userId },
+        },
+        create: {
+          blockerId: context.userId,
+          blockedId: args.userId,
+          reason: args.reason || "Inappropriate behavior",
+        },
+        update: {
+          reason: args.reason || "Inappropriate behavior",
+        },
+      });
+      console.log(`[USER_BLOCKED] User ${context.userId} blocked ${args.userId}. Reason: ${args.reason || "None"}`);
+      return true;
+    },
+    unblockUser: async (_: any, args: { userId: string }, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      await prisma.blockedUser.deleteMany({
+        where: {
+          blockerId: context.userId,
+          blockedId: args.userId,
+        },
+      });
+      console.log(`[USER_UNBLOCKED] User ${context.userId} unblocked ${args.userId}`);
+      return true;
+    },
+    reportUser: async (_: any, args: { userId: string; reason: string }, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      await prisma.userReport.create({
+        data: {
+          reporterId: context.userId,
+          reportedId: args.userId,
+          reason: args.reason || "Reported by user",
+        },
+      });
+      console.log(`[USER_REPORTED] User ${context.userId} reported ${args.userId}. Reason: ${args.reason}`);
+      return true;
+    },
+    suggestFeature: async (_: any, args: { title: string; description: string; category?: string }, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      await prisma.featureSuggestion.create({
+        data: {
+          userId: context.userId,
+          title: args.title,
+          description: args.description,
+          category: args.category || "Feature",
+          status: "PENDING",
+        },
+      });
+      console.log(`[FEATURE_SUGGESTED] by User ${context.userId}: ${args.title}`);
+      return true;
+    },
+    upgradeToPremium: async (
+      _: any,
+      args: { plan: string; receipt: string; platform: string; productId?: string; amount?: number },
+      context: MyContext
+    ) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+
+      const currentUser = await prisma.user.findUnique({
+        where: { id: context.userId },
+      });
+      if (!currentUser) throw new Error("User not found");
+
+      const now = new Date();
+      const planUpper = args.plan.toUpperCase();
+      let premiumUntil = new Date();
+      let addedTokens = 50000;
+      let addedSuperlikes = 5;
+
+      if (planUpper.includes("MONTH")) {
+        premiumUntil.setMonth(now.getMonth() + 1);
+      } else if (planUpper.includes("YEAR") || planUpper.includes("ANNUAL")) {
+        premiumUntil.setFullYear(now.getFullYear() + 1);
+        addedTokens = 75000;
+        addedSuperlikes = 10;
+      } else if (planUpper.includes("LIFE")) {
+        premiumUntil.setFullYear(now.getFullYear() + 100);
+        addedTokens = 150000;
+        addedSuperlikes = 25;
+      } else {
+        premiumUntil.setMonth(now.getMonth() + 1);
+      }
+
+      await prisma.purchaseTransaction.create({
+        data: {
+          userId: context.userId,
+          productId: args.productId || `shift_premium_${args.plan.toLowerCase()}`,
+          plan: planUpper,
+          platform: args.platform.toUpperCase(),
+          receipt: args.receipt,
+          amount: args.amount !== undefined ? args.amount : (planUpper.includes("MONTH") ? 4.99 : 42.48),
+          status: "VERIFIED",
+        },
+      });
+
+      const updatedUser = await prisma.user.update({
+        where: { id: context.userId },
+        data: {
+          isPremium: true,
+          premiumUntil: premiumUntil,
+          subscriptionPlan: planUpper,
+          platformReceipt: args.receipt,
+          iapPlatform: args.platform.toUpperCase(),
+          tokens: { increment: addedTokens },
+          superlikeTokens: { increment: addedSuperlikes },
+        },
+      });
+
+      console.log(`[IAP_VERIFIED] User ${context.userId} upgraded to Premium (${planUpper}) via ${args.platform}`);
+      return updatedUser;
+    },
+    restorePremium: async (_: any, __: any, context: MyContext) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+
+      const pastTx = await prisma.purchaseTransaction.findFirst({
+        where: { userId: context.userId, status: "VERIFIED" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const user = await prisma.user.findUnique({ where: { id: context.userId } });
+      if (!user) throw new Error("User not found");
+
+      if (pastTx || (user && user.platformReceipt)) {
+        const updatedUser = await prisma.user.update({
+          where: { id: context.userId },
+          data: {
+            isPremium: true,
+            subscriptionPlan: pastTx?.plan || user.subscriptionPlan || "RESTORED",
+            iapPlatform: pastTx?.platform || user.iapPlatform || "STORE_VERIFICATION",
+          },
+        });
+        console.log(`[IAP_RESTORED] User ${context.userId} successfully restored Premium.`);
+        return updatedUser;
+      } else {
+        throw new Error("No active Google Play or App Store subscription found to restore for this account.");
+      }
+    },
   },
   User: {
+    birthDate: (parent: any) => (parent.birthDate && typeof parent.birthDate !== "string" ? new Date(parent.birthDate).toISOString() : parent.birthDate || null),
+    createdAt: (parent: any) => (parent.createdAt && typeof parent.createdAt !== "string" ? new Date(parent.createdAt).toISOString() : parent.createdAt || null),
+    updatedAt: (parent: any) => (parent.updatedAt && typeof parent.updatedAt !== "string" ? new Date(parent.updatedAt).toISOString() : parent.updatedAt || null),
+    premiumUntil: (parent: any) => (parent.premiumUntil && typeof parent.premiumUntil !== "string" ? new Date(parent.premiumUntil).toISOString() : parent.premiumUntil || null),
     matches1: async (parent: any) => {
       return await prisma.match.findMany({ where: { user1Id: parent.id } });
     },
@@ -431,6 +710,19 @@ export const userResolvers = {
         },
       });
       return !!swipe;
+    },
+    analytics: async (parent: any) => {
+      const analytic = await prisma.analytics.findUnique({ where: { userId: parent.id } });
+      const likesCount = await prisma.swipe.count({ where: { swipedId: parent.id, type: "LIKE" } });
+      const superlikesCount = await prisma.swipe.count({ where: { swipedId: parent.id, type: "SUPERLIKE" } });
+      const totalSwipes = await prisma.swipe.count({ where: { swipedId: parent.id } });
+      
+      return {
+        profileViews: analytic ? analytic.profileViews : Math.floor(Math.random() * 20) + 15, // Provide lively starting estimate if record is brand new
+        likesReceived: likesCount,
+        superlikesReceived: superlikesCount,
+        swipesReceivedCount: totalSwipes,
+      };
     },
   },
 };

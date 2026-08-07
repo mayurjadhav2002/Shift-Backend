@@ -10,6 +10,7 @@ type User {
   longitude: Float
   
   isVerified: Boolean
+  isPremium: Boolean
   prompts: String
   jobTitle: String
   company: String
@@ -32,6 +33,7 @@ type User {
 
   createdAt: String
   updatedAt: String
+  lastActive: String
   matches1: [Match!]
   matches2: [Match!]
   messages: [Message!]
@@ -47,6 +49,25 @@ type User {
 
   lastRewardClaimDate: String
   rewardDayCounter: Int
+
+  isMatched: Boolean
+  matchId: ID
+
+  country: String
+  preferredCountry: String
+  isPaused: Boolean
+  premiumUntil: String
+  subscriptionPlan: String
+  platformReceipt: String
+  iapPlatform: String
+  analytics: Analytics
+}
+
+type Analytics {
+  profileViews: Int!
+  likesReceived: Int!
+  superlikesReceived: Int!
+  swipesReceivedCount: Int!
 }
 
 type DailyRewardStatus {
@@ -55,10 +76,20 @@ type DailyRewardStatus {
   serverTime: String!
 }
 
+type BlockedUserInfo {
+  id: ID!
+  blockedId: ID!
+  name: String!
+  avatar: String
+  reason: String
+  createdAt: String!
+}
+
 type Query {
   users: [User!]
   getProfile(id: ID!, isView: Boolean): User!
   getDailyRewardStatus: DailyRewardStatus!
+  getBlockedUsers: [BlockedUserInfo!]!
 }
 
 type AuthPayload {
@@ -100,6 +131,9 @@ type Mutation {
     snapchat: String
     twitter: String
     showSocials: Boolean
+    country: String
+    preferredCountry: String
+    isPaused: Boolean
   ): User!
   logout: Boolean!
   deleteAccount: User!
@@ -109,4 +143,12 @@ type Mutation {
   deleteUser(id: ID!): User!
   uploadPhoto(base64: String!): String!
   deletePhoto(url: String!): Boolean!
+
+  unmatchUser(userId: ID!): Boolean!
+  blockUser(userId: ID!, reason: String): Boolean!
+  unblockUser(userId: ID!): Boolean!
+  reportUser(userId: ID!, reason: String!): Boolean!
+  suggestFeature(title: String!, description: String!, category: String): Boolean!
+  upgradeToPremium(plan: String!, receipt: String!, platform: String!, productId: String, amount: Float): User!
+  restorePremium: User!
 }

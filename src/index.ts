@@ -6,6 +6,8 @@ import { expressMiddleware } from "@as-integrations/express5";
 import { typeDefs } from "./graphql/typeDefs";
 import { resolvers } from "./graphql/resolvers";
 import { getUserContext, MyContext } from "./middleware/auth";
+import { createServer } from "http";
+import { setupSocketServer } from "./socket";
 
 const startServer = async () => {
   const app = express();
@@ -34,7 +36,10 @@ const startServer = async () => {
 
   const PORT = process.env.PORT || 3000;
 
-  app.listen(PORT, () => {
+  const httpServer = createServer(app);
+  setupSocketServer(httpServer);
+
+  httpServer.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`GraphQL endpoint: http://localhost:${PORT}/graphql`);
   });

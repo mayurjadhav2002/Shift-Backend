@@ -11,8 +11,11 @@ type Message {
   matchId: String!
   senderId: String!
   content: String!
+  imageUrl: String
+  gifUrl: String
   createdAt: String
   isRead: Boolean
+  isRevealed: Boolean
 }
 
 type Post {

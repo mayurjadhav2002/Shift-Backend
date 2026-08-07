@@ -12,19 +12,38 @@ export const feedResolvers = {
         throw new Error("Not Authenticated");
       }
 
+      const currentUser = await prisma.user.findUnique({
+        where: { id: context.userId },
+      });
+
       const swipedUsers = await prisma.swipe.findMany({
         where: { swiperId: context.userId },
         select: { swipedId: true },
       });
 
-      const swipedUserIds = swipedUsers.map((s) => s.swipedId);
-      swipedUserIds.push(context.userId); 
-      const users = await prisma.user.findMany({
+      const blockedRecords = await prisma.blockedUser.findMany({
         where: {
-          id: {
-            notIn: swipedUserIds,
-          },
+          OR: [{ blockerId: context.userId }, { blockedId: context.userId }],
         },
+      });
+
+      const swipedUserIds = swipedUsers.map((s) => s.swipedId);
+      const blockedUserIds = blockedRecords.map((b) =>
+        b.blockerId === context.userId ? b.blockedId : b.blockerId
+      );
+      const excludedIds = [...new Set([...swipedUserIds, ...blockedUserIds, context.userId])];
+
+      const whereClause: any = {
+        id: { notIn: excludedIds },
+        isPaused: false,
+      };
+
+      if (currentUser?.isPremium && currentUser?.preferredCountry && currentUser.preferredCountry !== "All") {
+        whereClause.country = currentUser.preferredCountry;
+      }
+
+      const users = await prisma.user.findMany({
+        where: whereClause,
         take: args.limit || 20,
         skip: args.offset || 0,
       });
@@ -71,7 +90,16 @@ export const feedResolvers = {
       });
       const swipedUserIds = mySwipes.map((s) => s.swipedId);
       
-      const excludeIds = new Set([...matchedUserIds, ...swipedUserIds]);
+      const blockedRecords = await prisma.blockedUser.findMany({
+        where: {
+          OR: [{ blockerId: context.userId }, { blockedId: context.userId }],
+        },
+      });
+      const blockedUserIds = blockedRecords.map((b) =>
+        b.blockerId === context.userId ? b.blockedId : b.blockerId
+      );
+
+      const excludeIds = new Set([...matchedUserIds, ...swipedUserIds, ...blockedUserIds]);
 
       const validIncomingSwipes = incomingSwipes.filter((s) => !excludeIds.has(s.swiperId));
       
@@ -89,6 +117,7 @@ export const feedResolvers = {
       const users = await prisma.user.findMany({
         where: {
           id: { in: validSwiperIds },
+          isPaused: false,
         },
       });
 
