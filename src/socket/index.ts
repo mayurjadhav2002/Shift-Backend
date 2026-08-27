@@ -3,6 +3,7 @@ import { Server as HttpServer } from "http";
 import jwt from "jsonwebtoken";
 import prisma from "../utils/prisma";
 import redis from "../utils/redis";
+import { sendNotification } from "../utils/helpers/notifications";
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
 let ioInstance: Server;
@@ -175,6 +176,13 @@ export const setupSocketServer = (httpServer: HttpServer) => {
           .to(`user_${message.match.user1Id}`)
           .to(`user_${message.match.user2Id}`)
           .emit("receive_message", payload);
+
+        // Check if the other user is offline, if so, send push notification
+        const otherId = message.match.user1Id === userId ? message.match.user2Id : message.match.user1Id;
+        const activeCount = await redis.scard(`online_user:${otherId}`);
+        if (activeCount === 0) {
+          await sendNotification(otherId, sender.name, content || "Sent an image", "MESSAGE");
+        }
       } catch (error) {
         console.error("Error sending message via socket:", error);
         socket.emit("message_error", { error: "Failed to send message" });

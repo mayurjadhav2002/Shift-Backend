@@ -488,10 +488,41 @@ export const userResolvers = {
         throw new Error(`Failed to delete photo: ${error.message}`);
       }
     },
+    updateLocation: async (
+      _: any,
+      args: { latitude: number; longitude: number },
+      context: MyContext
+    ) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      return await prisma.user.update({
+        where: { id: context.userId },
+        data: {
+          latitude: args.latitude,
+          longitude: args.longitude,
+        },
+      });
+    },
+    updateNotificationSettings: async (
+      _: any,
+      args: { pushNewMessages?: boolean; pushNewMatches?: boolean; pushRequests?: boolean; fcmToken?: string },
+      context: MyContext
+    ) => {
+      if (!context.userId) throw new Error("Not Authenticated");
+      const data: any = {};
+      if (args.pushNewMessages !== undefined) data.pushNewMessages = args.pushNewMessages;
+      if (args.pushNewMatches !== undefined) data.pushNewMatches = args.pushNewMatches;
+      if (args.pushRequests !== undefined) data.pushRequests = args.pushRequests;
+      if (args.fcmToken !== undefined) data.fcmToken = args.fcmToken;
+
+      return await prisma.user.update({
+        where: { id: context.userId },
+        data,
+      });
+    },
 
     unmatchUser: async (_: any, args: { userId: string }, context: MyContext) => {
       if (!context.userId) throw new Error("Not Authenticated");
-      await prisma.match.updateMany({
+      const matchesToUpdate = await prisma.match.findMany({
         where: {
           OR: [
             { user1Id: context.userId, user2Id: args.userId },
@@ -499,28 +530,66 @@ export const userResolvers = {
           ],
           isUnmatched: false,
         },
-        data: {
-          isUnmatched: true,
-          unmatchedAt: new Date(),
-        },
       });
+
+      if (matchesToUpdate.length > 0) {
+        await prisma.match.updateMany({
+          where: {
+            id: { in: matchesToUpdate.map(m => m.id) }
+          },
+          data: {
+            isUnmatched: true,
+            unmatchedAt: new Date(),
+          },
+        });
+
+        try {
+          const { getIO } = require("@/socket");
+          const io = getIO();
+          for (const match of matchesToUpdate) {
+            io.to(`user_${context.userId}`).emit("chat_deleted", { matchId: match.id });
+            io.to(`user_${args.userId}`).emit("chat_deleted", { matchId: match.id });
+          }
+        } catch (e) {
+          console.error("Socket error on unmatchUser", e);
+        }
+      }
+
       return true;
     },
     blockUser: async (_: any, args: { userId: string; reason?: string }, context: MyContext) => {
       if (!context.userId) throw new Error("Not Authenticated");
-      // 1. Unmatch any active connection
-      await prisma.match.updateMany({
+      
+      const matchesToUpdate = await prisma.match.findMany({
         where: {
           OR: [
             { user1Id: context.userId, user2Id: args.userId },
             { user1Id: args.userId, user2Id: context.userId },
           ],
         },
-        data: {
-          isUnmatched: true,
-          unmatchedAt: new Date(),
-        },
       });
+
+      if (matchesToUpdate.length > 0) {
+        await prisma.match.updateMany({
+          where: { id: { in: matchesToUpdate.map(m => m.id) } },
+          data: {
+            isUnmatched: true,
+            unmatchedAt: new Date(),
+          },
+        });
+
+        try {
+          const { getIO } = require("@/socket");
+          const io = getIO();
+          for (const match of matchesToUpdate) {
+            io.to(`user_${context.userId}`).emit("chat_deleted", { matchId: match.id });
+            io.to(`user_${args.userId}`).emit("chat_deleted", { matchId: match.id });
+          }
+        } catch (e) {
+          console.error("Socket error on blockUser", e);
+        }
+      }
+
       // 2. Remove all swipes between them so neither appears in feed/discover again
       await prisma.swipe.deleteMany({
         where: {
@@ -554,6 +623,43 @@ export const userResolvers = {
           blockedId: args.userId,
         },
       });
+
+      // Check if the other user has blocked the current user
+      const otherUserBlockedMe = await prisma.blockedUser.findFirst({
+        where: { blockerId: args.userId, blockedId: context.userId }
+      });
+
+      if (!otherUserBlockedMe) {
+        // Restore the match if it exists
+        const matchesToRestore = await prisma.match.findMany({
+          where: {
+            OR: [
+              { user1Id: context.userId, user2Id: args.userId },
+              { user1Id: args.userId, user2Id: context.userId },
+            ],
+            isUnmatched: true,
+          }
+        });
+
+        if (matchesToRestore.length > 0) {
+          await prisma.match.updateMany({
+            where: { id: { in: matchesToRestore.map(m => m.id) } },
+            data: { isUnmatched: false }
+          });
+
+          try {
+            const { getIO } = require("@/socket");
+            const io = getIO();
+            for (const match of matchesToRestore) {
+              io.to(`user_${context.userId}`).emit("chat_restored", match);
+              io.to(`user_${args.userId}`).emit("chat_restored", match);
+            }
+          } catch (e) {
+            console.error("Socket error on unblockUser", e);
+          }
+        }
+      }
+
       console.log(`[USER_UNBLOCKED] User ${context.userId} unblocked ${args.userId}`);
       return true;
     },
@@ -566,6 +672,63 @@ export const userResolvers = {
           reason: args.reason || "Reported by user",
         },
       });
+
+      // 1. Unmatch and emit socket event
+      const matchesToUpdate = await prisma.match.findMany({
+        where: {
+          OR: [
+            { user1Id: context.userId, user2Id: args.userId },
+            { user1Id: args.userId, user2Id: context.userId },
+          ],
+        },
+      });
+
+      if (matchesToUpdate.length > 0) {
+        await prisma.match.updateMany({
+          where: { id: { in: matchesToUpdate.map(m => m.id) } },
+          data: {
+            isUnmatched: true,
+            unmatchedAt: new Date(),
+          },
+        });
+
+        try {
+          const { getIO } = require("@/socket");
+          const io = getIO();
+          for (const match of matchesToUpdate) {
+            io.to(`user_${context.userId}`).emit("chat_deleted", { matchId: match.id });
+            io.to(`user_${args.userId}`).emit("chat_deleted", { matchId: match.id });
+          }
+        } catch (e) {
+          console.error("Socket error on reportUser", e);
+        }
+      }
+
+      // 2. Remove all swipes between them
+      await prisma.swipe.deleteMany({
+        where: {
+          OR: [
+            { swiperId: context.userId, swipedId: args.userId },
+            { swiperId: args.userId, swipedId: context.userId },
+          ],
+        },
+      });
+
+      // 3. Block them so they appear in blocked list
+      await prisma.blockedUser.upsert({
+        where: {
+          blockerId_blockedId: { blockerId: context.userId, blockedId: args.userId },
+        },
+        create: {
+          blockerId: context.userId,
+          blockedId: args.userId,
+          reason: args.reason || "Reported",
+        },
+        update: {
+          reason: args.reason || "Reported",
+        },
+      });
+
       console.log(`[USER_REPORTED] User ${context.userId} reported ${args.userId}. Reason: ${args.reason}`);
       return true;
     },

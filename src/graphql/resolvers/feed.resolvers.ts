@@ -1,6 +1,20 @@
 import prisma from "@/utils/prisma";
 import { MyContext } from "@/middleware/auth";
 
+function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371; // km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
 export const feedResolvers = {
   Query: {
     getFeed: async (
@@ -42,11 +56,27 @@ export const feedResolvers = {
         whereClause.country = currentUser.preferredCountry;
       }
 
-      const users = await prisma.user.findMany({
+      let users = await prisma.user.findMany({
         where: whereClause,
-        take: args.limit || 20,
-        skip: args.offset || 0,
       });
+
+      if (currentUser?.latitude && currentUser?.longitude) {
+        users = users.filter((u: any) => {
+          if (!u.latitude || !u.longitude) return false;
+          const dist = getDistance(currentUser.latitude!, currentUser.longitude!, u.latitude, u.longitude);
+          return dist <= 100; // 100km radius
+        });
+        
+        users.sort((a: any, b: any) => {
+           const distA = getDistance(currentUser.latitude!, currentUser.longitude!, a.latitude!, a.longitude!);
+           const distB = getDistance(currentUser.latitude!, currentUser.longitude!, b.latitude!, b.longitude!);
+           return distA - distB;
+        });
+      }
+
+      const limit = args.limit || 20;
+      const offset = args.offset || 0;
+      users = users.slice(offset, offset + limit);
 
       return users;
     },

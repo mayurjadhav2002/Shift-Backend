@@ -21,18 +21,18 @@ export const matchResolvers = {
     },
     getMessages: async (
       _: any,
-      args: { matchId: string, limit?: number, cursor?: string },
+      args: { matchId: string; limit?: number; cursor?: string },
       context: MyContext,
     ) => {
       if (!context.userId) {
         throw new Error("Not Authenticated");
       }
-      
+
       const user = await prisma.user.findUnique({
         where: { id: context.userId },
-        select: { isPremium: true }
+        select: { isPremium: true },
       });
-      
+
       const limit = args.limit || 20;
 
       const messages = await prisma.message.findMany({
@@ -40,39 +40,36 @@ export const matchResolvers = {
         skip: args.cursor ? 1 : 0,
         cursor: args.cursor ? { id: args.cursor } : undefined,
         where: { matchId: args.matchId },
-        orderBy: { createdAt: "desc" }
+        orderBy: { createdAt: "desc" },
       });
 
-      return messages.map(msg => {
+      return messages.map((msg) => {
         if (msg.senderId !== context.userId) {
           return {
             ...msg,
-            isRevealed: false
+            isRevealed: false,
           };
         }
-        
+
         const canSeeReceipt = user?.isPremium || msg.isRevealed;
-        
+
         return {
           ...msg,
           isRead: canSeeReceipt ? msg.isRead : false,
-          isRevealed: Boolean(msg.isRevealed)
+          isRevealed: Boolean(msg.isRevealed),
         };
       });
     },
     getChats: async (_: any, __: any, context: MyContext) => {
       if (!context.userId) throw new Error("Not Authenticated");
-      
+
       const matches = await prisma.match.findMany({
         where: {
           AND: [
             { OR: [{ user1Id: context.userId }, { user2Id: context.userId }] },
             { isUnmatched: false },
             {
-              OR: [
-                { dmStatus: null },
-                { dmStatus: { not: "REJECTED" } },
-              ],
+              OR: [{ dmStatus: null }, { dmStatus: { not: "REJECTED" } }],
             },
           ],
         },
@@ -81,24 +78,25 @@ export const matchResolvers = {
           user2: true,
           messages: {
             orderBy: { createdAt: "desc" },
-            take: 1
+            take: 1,
           },
           _count: {
             select: {
               messages: {
                 where: {
                   senderId: { not: context.userId },
-                  isRead: false
-                }
-              }
-            }
-          }
+                  isRead: false,
+                },
+              },
+            },
+          },
         },
-        orderBy: { updatedAt: "desc" }
+        orderBy: { updatedAt: "desc" },
       });
 
-      return matches.map(match => {
-        const matchedUser = match.user1Id === context.userId ? match.user2 : match.user1;
+      return matches.map((match) => {
+        const matchedUser =
+          match.user1Id === context.userId ? match.user2 : match.user1;
         return {
           id: match.id,
           matchedUser,
@@ -142,7 +140,11 @@ export const matchResolvers = {
         },
       });
     },
-    swipe: async (_: any, args: { swipedId: string; type: string }, context: MyContext) => {
+    swipe: async (
+      _: any,
+      args: { swipedId: string; type: string },
+      context: MyContext,
+    ) => {
       if (!context.userId) {
         throw new Error("Not Authenticated");
       }
@@ -164,7 +166,10 @@ export const matchResolvers = {
           select: { tokens: true, superlikeTokens: true },
         });
 
-        const currentBalance = tokenFieldToDeduct === "superlikeTokens" ? user?.superlikeTokens : user?.tokens;
+        const currentBalance =
+          tokenFieldToDeduct === "superlikeTokens"
+            ? user?.superlikeTokens
+            : user?.tokens;
 
         if (!user || currentBalance === undefined || currentBalance < cost) {
           throw new Error("Insufficient tokens");
@@ -205,9 +210,19 @@ export const matchResolvers = {
               user2Id: args.swipedId,
             },
           });
-          
-          await sendNotification(context.userId, "New Match!", "You have a new match!");
-          await sendNotification(args.swipedId, "New Match!", "You have a new match!");
+
+          await sendNotification(
+            context.userId,
+            "New Match!",
+            "You have a new match!",
+            "MATCH",
+          );
+          await sendNotification(
+            args.swipedId,
+            "New Match!",
+            "You have a new match!",
+            "MATCH",
+          );
 
           // Notify sockets
           try {
@@ -219,28 +234,39 @@ export const matchResolvers = {
             console.error("Socket error on new match", e);
           }
         }
+      } else {
+        // Not a mutual match yet, so this is a new request for swipedId
+        const text =
+          args.type === "SUPERLIKE"
+            ? "Someone superliked you! 🌟"
+            : "Someone liked your profile! ❤️";
+        await sendNotification(args.swipedId, "New Request", text, "REQUEST");
       }
 
       const updatedUser = await prisma.user.findUnique({
-        where: { id: context.userId }
+        where: { id: context.userId },
       });
 
       return {
         match,
-        user: updatedUser
+        user: updatedUser,
       };
     },
-    revealMessageStatus: async (_: any, args: { messageId: string }, context: MyContext) => {
+    revealMessageStatus: async (
+      _: any,
+      args: { messageId: string },
+      context: MyContext,
+    ) => {
       if (!context.userId) throw new Error("Not Authenticated");
 
       const message = await prisma.message.findUnique({
-        where: { id: args.messageId }
+        where: { id: args.messageId },
       });
 
       if (!message) throw new Error("Message not found");
 
       const user = await prisma.user.findUnique({
-        where: { id: context.userId }
+        where: { id: context.userId },
       });
 
       if (!user) throw new Error("User not found");
@@ -254,27 +280,36 @@ export const matchResolvers = {
         await prisma.$transaction([
           prisma.user.update({
             where: { id: context.userId },
-            data: { tokens: { decrement: 5 } }
+            data: { tokens: { decrement: 5 } },
           }),
           prisma.message.update({
             where: { id: args.messageId },
-            data: { isRevealed: true }
-          })
+            data: { isRevealed: true },
+          }),
         ]);
       } else if (!message.isRevealed) {
         await prisma.message.update({
           where: { id: args.messageId },
-          data: { isRevealed: true }
+          data: { isRevealed: true },
         });
       }
 
       return message.isRead || false;
     },
-    markChatAsRead: async (_: any, args: { matchId: string }, context: MyContext) => {
+    markChatAsRead: async (
+      _: any,
+      args: { matchId: string },
+      context: MyContext,
+    ) => {
       if (!context.userId) throw new Error("Not Authenticated");
 
-      const match = await prisma.match.findUnique({ where: { id: args.matchId } });
-      if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+      const match = await prisma.match.findUnique({
+        where: { id: args.matchId },
+      });
+      if (
+        !match ||
+        (match.user1Id !== context.userId && match.user2Id !== context.userId)
+      ) {
         throw new Error("Match not found or not authorized");
       }
 
@@ -282,15 +317,19 @@ export const matchResolvers = {
         where: {
           matchId: args.matchId,
           senderId: { not: context.userId },
-          isRead: false
+          isRead: false,
         },
         data: {
-          isRead: true
-        }
+          isRead: true,
+        },
       });
       return true;
     },
-    createDirectDM: async (_: any, args: { targetUserId: string; content?: string }, context: MyContext) => {
+    createDirectDM: async (
+      _: any,
+      args: { targetUserId: string; content?: string },
+      context: MyContext,
+    ) => {
       if (!context.userId) {
         throw new Error("Not Authenticated");
       }
@@ -386,7 +425,14 @@ export const matchResolvers = {
         console.error("Error upserting swipe for Direct DM", err);
       }
 
-      await sendNotification(args.targetUserId, "New Direct Message! 💌", args.content ? `${args.content}` : "Someone sent you a direct chat request!");
+      await sendNotification(
+        args.targetUserId,
+        "New Direct Message! 💌",
+        args.content
+          ? `${args.content}`
+          : "Someone sent you a direct chat request!",
+        "MESSAGE",
+      );
 
       try {
         const { getIO } = require("@/socket");
@@ -394,10 +440,19 @@ export const matchResolvers = {
         io.to(`user_${context.userId}`).emit("new_direct_dm", match);
         io.to(`user_${args.targetUserId}`).emit("new_direct_dm", match);
         if (initialMessage) {
-          io.to(`user_${context.userId}`).emit("receive_message", initialMessage);
-          io.to(`user_${args.targetUserId}`).emit("receive_message", initialMessage);
+          io.to(`user_${context.userId}`).emit(
+            "receive_message",
+            initialMessage,
+          );
+          io.to(`user_${args.targetUserId}`).emit(
+            "receive_message",
+            initialMessage,
+          );
           io.to(`user_${context.userId}`).emit("new_message", initialMessage);
-          io.to(`user_${args.targetUserId}`).emit("new_message", initialMessage);
+          io.to(`user_${args.targetUserId}`).emit(
+            "new_message",
+            initialMessage,
+          );
         }
       } catch (e) {
         console.error("Socket error on direct DM", e);
@@ -412,11 +467,20 @@ export const matchResolvers = {
         user: updatedUser,
       };
     },
-    acceptDirectDM: async (_: any, args: { matchId: string }, context: MyContext) => {
+    acceptDirectDM: async (
+      _: any,
+      args: { matchId: string },
+      context: MyContext,
+    ) => {
       if (!context.userId) throw new Error("Not Authenticated");
 
-      const match = await prisma.match.findUnique({ where: { id: args.matchId } });
-      if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+      const match = await prisma.match.findUnique({
+        where: { id: args.matchId },
+      });
+      if (
+        !match ||
+        (match.user1Id !== context.userId && match.user2Id !== context.userId)
+      ) {
         throw new Error("Match not found or not authorized");
       }
 
@@ -431,18 +495,29 @@ export const matchResolvers = {
       try {
         const { getIO } = require("@/socket");
         const io = getIO();
-        io.to(`user_${match.user1Id}`).to(`user_${match.user2Id}`).emit("dm_updated", { matchId: args.matchId, dmStatus: "ACCEPTED" });
+        io.to(`user_${match.user1Id}`)
+          .to(`user_${match.user2Id}`)
+          .emit("dm_updated", { matchId: args.matchId, dmStatus: "ACCEPTED" });
       } catch (e) {
         console.error("Socket error on acceptDirectDM", e);
       }
 
       return updatedMatch;
     },
-    rejectDirectDM: async (_: any, args: { matchId: string }, context: MyContext) => {
+    rejectDirectDM: async (
+      _: any,
+      args: { matchId: string },
+      context: MyContext,
+    ) => {
       if (!context.userId) throw new Error("Not Authenticated");
 
-      const match = await prisma.match.findUnique({ where: { id: args.matchId } });
-      if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+      const match = await prisma.match.findUnique({
+        where: { id: args.matchId },
+      });
+      if (
+        !match ||
+        (match.user1Id !== context.userId && match.user2Id !== context.userId)
+      ) {
         throw new Error("Match not found or not authorized");
       }
 
@@ -463,7 +538,13 @@ export const matchResolvers = {
       try {
         const { getIO } = require("@/socket");
         const io = getIO();
-        io.to(`user_${match.user1Id}`).to(`user_${match.user2Id}`).emit("dm_updated", { matchId: args.matchId, dmStatus: "REJECTED", isUnmatched: true });
+        io.to(`user_${match.user1Id}`)
+          .to(`user_${match.user2Id}`)
+          .emit("dm_updated", {
+            matchId: args.matchId,
+            dmStatus: "REJECTED",
+            isUnmatched: true,
+          });
       } catch (e) {
         console.error("Socket error on rejectDirectDM", e);
       }

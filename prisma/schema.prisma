@@ -52,6 +52,11 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  fcmToken        String?
+  pushNewMessages Boolean @default(true)
+  pushNewMatches  Boolean @default(true)
+  pushRequests    Boolean @default(true)
+
   loginProvider LoginProvider
 
   swipesGiven    Swipe[]   @relation("SwipesGiven")

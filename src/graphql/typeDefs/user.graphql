@@ -31,6 +31,11 @@ type User {
   twitter: String
   showSocials: Boolean
 
+  fcmToken: String
+  pushNewMessages: Boolean
+  pushNewMatches: Boolean
+  pushRequests: Boolean
+
   createdAt: String
   updatedAt: String
   lastActive: String
@@ -139,6 +144,9 @@ type Mutation {
   deleteAccount: User!
   addTokens(amount: Int!): User!
   claimDailyReward: User!
+
+  updateLocation(latitude: Float!, longitude: Float!): User!
+  updateNotificationSettings(pushNewMessages: Boolean, pushNewMatches: Boolean, pushRequests: Boolean, fcmToken: String): User!
 
   deleteUser(id: ID!): User!
   uploadPhoto(base64: String!): String!
