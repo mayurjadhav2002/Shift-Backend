@@ -1,14 +1,16 @@
 import prisma from "@/utils/prisma";
-import * as admin from "firebase-admin";
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getMessaging } from "firebase-admin/messaging";
 
 // Initialize Firebase Admin SDK if not already initialized
-if (!admin.apps?.length) {
+const apps = getApps();
+if (!apps.length) {
   try {
     // In production, you would use a service account key file or environment variables
     // For now, we will just stub it if credentials are not provided
     if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-      admin.initializeApp({
-        credential: admin.credential.cert(
+      initializeApp({
+        credential: cert(
           JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY),
         ),
       });
@@ -53,7 +55,8 @@ export const sendNotification = async (
     if (type === "MATCH" && !user.pushNewMatches) return;
     if (type === "REQUEST" && !user.pushRequests) return;
 
-    if (!admin.apps.length) {
+    const currentApps = getApps();
+    if (!currentApps.length) {
       console.log(
         `[Mock Push Notification to User ${userId}] ${title}: ${body}`,
       );
@@ -66,7 +69,7 @@ export const sendNotification = async (
       data: { type },
     };
 
-    const response = await admin.messaging().send(message);
+    const response = await getMessaging().send(message);
     console.log(`Successfully sent message to ${userId}:`, response);
   } catch (error) {
     console.error(`Error sending push notification to user ${userId}:`, error);

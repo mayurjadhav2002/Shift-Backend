@@ -1,5 +1,6 @@
 import { LoginProvider } from "@prisma/client";
 import prisma from "@/utils/prisma";
+import redis from "@/utils/redis";
 import { generateToken } from "@/utils/tokens";
 import { MyContext } from "@/middleware/auth";
 import { OAuth2Client } from "google-auth-library";
@@ -838,6 +839,18 @@ export const userResolvers = {
     createdAt: (parent: any) => (parent.createdAt && typeof parent.createdAt !== "string" ? new Date(parent.createdAt).toISOString() : parent.createdAt || null),
     updatedAt: (parent: any) => (parent.updatedAt && typeof parent.updatedAt !== "string" ? new Date(parent.updatedAt).toISOString() : parent.updatedAt || null),
     premiumUntil: (parent: any) => (parent.premiumUntil && typeof parent.premiumUntil !== "string" ? new Date(parent.premiumUntil).toISOString() : parent.premiumUntil || null),
+    lastActive: async (parent: any) => {
+      const activeCount = await redis.scard(`online_user:${parent.id}`);
+      if (activeCount > 0) {
+        return new Date().toISOString();
+      }
+      const lastActive = await redis.get(`last_active:${parent.id}`);
+      if (lastActive) {
+        return lastActive;
+      }
+      const fallbackDate = parent.updatedAt || parent.createdAt || new Date();
+      return new Date(fallbackDate).toISOString();
+    },
     matches1: async (parent: any) => {
       return await prisma.match.findMany({ where: { user1Id: parent.id } });
     },

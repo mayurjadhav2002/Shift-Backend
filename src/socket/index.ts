@@ -24,6 +24,16 @@ export const setupSocketServer = (httpServer: HttpServer) => {
   });
   ioInstance = io;
 
+  // Clear all online users on server startup to handle crashes/redeployments cleanly
+  redis.keys("online_user:*").then(async (keys) => {
+    if (keys.length > 0) {
+      await redis.del(...keys);
+      console.log(`Cleared ${keys.length} stale online user keys from Redis on startup.`);
+    }
+  }).catch(err => {
+    console.error("Failed to clear stale online user keys on boot:", err);
+  });
+
   // Authentication Middleware
   io.use((socket, next) => {
     const token = socket.handshake.auth.token || socket.handshake.headers.authorization;
@@ -49,6 +59,9 @@ export const setupSocketServer = (httpServer: HttpServer) => {
     // Add to Redis Set for this user
     const userKey = `online_user:${userId}`;
     await redis.sadd(userKey, socket.id);
+    
+    // Track activity timestamp in Redis
+    await redis.set(`last_active:${userId}`, new Date().toISOString());
     
     // Check if this is their first active socket connection
     const activeSocketsCount = await redis.scard(userKey);
@@ -113,7 +126,7 @@ export const setupSocketServer = (httpServer: HttpServer) => {
         // Verify sender token balance if not premium
         const sender = await prisma.user.findUnique({
           where: { id: userId },
-          select: { id: true, isPremium: true, tokens: true }
+          select: { id: true, name: true, isPremium: true, tokens: true }
         });
 
         if (!sender) {
@@ -201,6 +214,9 @@ export const setupSocketServer = (httpServer: HttpServer) => {
       
       const userKey = `online_user:${userId}`;
       await redis.srem(userKey, socket.id);
+      
+      // Update last active time in Redis
+      await redis.set(`last_active:${userId}`, new Date().toISOString());
       
       const activeSocketsCount = await redis.scard(userKey);
       
