@@ -5,6 +5,7 @@ import { generateToken } from "@/utils/tokens";
 import { MyContext } from "@/middleware/auth";
 import { OAuth2Client } from "google-auth-library";
 import { v2 as cloudinary } from "cloudinary";
+import * as argon2 from "argon2";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -203,6 +204,7 @@ export const userResolvers = {
       },
     ) => {
       let user;
+      const hashedPassword = await argon2.hash(args.password);
       const userExists = await prisma.user.findUnique({
         where: { email: args.email },
       });
@@ -211,7 +213,7 @@ export const userResolvers = {
           where: { email: args.email },
           data: {
             email: args.email,
-            password: args.password,
+            password: hashedPassword,
             name: args.name,
             loginProvider: args.loginProvider,
           },
@@ -220,7 +222,7 @@ export const userResolvers = {
         user = await prisma.user.create({
           data: {
             email: args.email,
-            password: args.password,
+            password: hashedPassword,
             name: args.name,
             loginProvider: args.loginProvider,
             tokens: 100,
@@ -361,10 +363,11 @@ export const userResolvers = {
         name: string;
       },
     ) => {
+      const hashedPassword = await argon2.hash(args.password);
       let user = await prisma.user.create({
         data: {
           email: args.email,
-          password: args.password,
+          password: hashedPassword,
           name: args.name,
           loginProvider: LoginProvider.EMAIL,
           tokens: 100,
@@ -378,6 +381,27 @@ export const userResolvers = {
       });
       return { user, accessToken: token }; // Return format based on what client expects, though type is User! in schema.
       // Wait, in schema `createUser` returns `User!`, but here it returns `{ user, accessToken: token }`. I will just return user, as per schema.
+    },
+    login: async (_: any, args: { email: string; password: string }) => {
+      const user = await prisma.user.findUnique({ where: { email: args.email } });
+      if (!user) {
+        throw new Error("Invalid email or password");
+      }
+      if (!user.password) {
+        throw new Error("User signed up with a different provider. Please use Google Sign In.");
+      }
+      
+      const validPassword = await argon2.verify(user.password, args.password);
+      if (!validPassword) {
+        throw new Error("Invalid email or password");
+      }
+      
+      const token = generateToken({
+        id: user.id,
+        email: user.email,
+        createdAt: new Date(),
+      });
+      return { user, accessToken: token };
     },
     logout: async () => {
       return true;

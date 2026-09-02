@@ -104,6 +104,7 @@ type AuthPayload {
 
 type Mutation {
   loginWithGoogle(idToken: String!): AuthPayload!
+  login(email: String!, password: String!): AuthPayload!
   createUser(email: String!, password: String!, name: String!): AuthPayload!
   signUp(email: String!, password: String!, name: String!): AuthPayload!
   updateUser(
