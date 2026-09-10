@@ -165,21 +165,19 @@ export const userResolvers = {
       const name = payload.name || "Google User";
       const picture = payload.picture;
 
-      let user = await prisma.user.findUnique({
+      let user = await prisma.user.upsert({
         where: { email },
+        update: {},
+        create: {
+          email,
+          name,
+          loginProvider: LoginProvider.GOOGLE,
+          tokens: 100,
+          photos: picture ? [picture] : [],
+        },
       });
 
-      if (!user) {
-        user = await prisma.user.create({
-          data: {
-            email,
-            name,
-            loginProvider: LoginProvider.GOOGLE,
-            tokens: 100,
-            photos: picture ? [picture] : [],
-          },
-        });
-      } else if (picture && (!user.photos || user.photos.length === 0)) {
+      if (picture && (!user.photos || user.photos.length === 0)) {
         user = await prisma.user.update({
           where: { email },
           data: { photos: [picture] },
