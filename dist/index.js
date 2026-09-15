@@ -13,6 +13,7 @@ const resolvers_1 = require("./graphql/resolvers");
 const auth_1 = require("./middleware/auth");
 const http_1 = require("http");
 const socket_1 = require("./socket");
+const contact_1 = __importDefault(require("./routes/contact"));
 const startServer = async () => {
     const app = (0, express_1.default)();
     app.use((0, cors_1.default)());
@@ -25,6 +26,8 @@ const startServer = async () => {
     app.use("/graphql", (0, express5_1.expressMiddleware)(server, {
         context: async ({ req }) => (0, auth_1.getUserContext)(req.headers.authorization),
     }));
+    // REST routes
+    app.use("/api/contact", contact_1.default);
     app.get("/", (req, res) => {
         res.json({ message: "Hello from Shift Backend!" });
     });

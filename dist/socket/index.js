@@ -8,6 +8,7 @@ const socket_io_1 = require("socket.io");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = __importDefault(require("../utils/prisma"));
 const redis_1 = __importDefault(require("../utils/redis"));
+const notifications_1 = require("../utils/helpers/notifications");
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 let ioInstance;
 const getIO = () => {
@@ -25,6 +26,15 @@ const setupSocketServer = (httpServer) => {
         },
     });
     ioInstance = io;
+    // Clear all online users on server startup to handle crashes/redeployments cleanly
+    redis_1.default.keys("online_user:*").then(async (keys) => {
+        if (keys.length > 0) {
+            await redis_1.default.del(...keys);
+            console.log(`Cleared ${keys.length} stale online user keys from Redis on startup.`);
+        }
+    }).catch(err => {
+        console.error("Failed to clear stale online user keys on boot:", err);
+    });
     // Authentication Middleware
     io.use((socket, next) => {
         const token = socket.handshake.auth.token || socket.handshake.headers.authorization;
@@ -48,6 +58,8 @@ const setupSocketServer = (httpServer) => {
         // Add to Redis Set for this user
         const userKey = `online_user:${userId}`;
         await redis_1.default.sadd(userKey, socket.id);
+        // Track activity timestamp in Redis
+        await redis_1.default.set(`last_active:${userId}`, new Date().toISOString());
         // Check if this is their first active socket connection
         const activeSocketsCount = await redis_1.default.scard(userKey);
         if (activeSocketsCount === 1) {
@@ -101,7 +113,7 @@ const setupSocketServer = (httpServer) => {
                 // Verify sender token balance if not premium
                 const sender = await prisma_1.default.user.findUnique({
                     where: { id: userId },
-                    select: { id: true, isPremium: true, tokens: true }
+                    select: { id: true, name: true, isPremium: true, tokens: true }
                 });
                 if (!sender) {
                     socket.emit("message_error", { tempId, error: "User not found" });
@@ -158,6 +170,12 @@ const setupSocketServer = (httpServer) => {
                     .to(`user_${message.match.user1Id}`)
                     .to(`user_${message.match.user2Id}`)
                     .emit("receive_message", payload);
+                // Check if the other user is offline, if so, send push notification
+                const otherId = message.match.user1Id === userId ? message.match.user2Id : message.match.user1Id;
+                const activeCount = await redis_1.default.scard(`online_user:${otherId}`);
+                if (activeCount === 0) {
+                    await (0, notifications_1.sendNotification)(otherId, sender.name, content || "Sent an image", "MESSAGE");
+                }
             }
             catch (error) {
                 console.error("Error sending message via socket:", error);
@@ -174,6 +192,8 @@ const setupSocketServer = (httpServer) => {
             console.log(`User disconnected: ${userId} from socket ${socket.id}`);
             const userKey = `online_user:${userId}`;
             await redis_1.default.srem(userKey, socket.id);
+            // Update last active time in Redis
+            await redis_1.default.set(`last_active:${userId}`, new Date().toISOString());
             const activeSocketsCount = await redis_1.default.scard(userKey);
             if (activeSocketsCount === 0) {
                 // Notify matches that this user is offline

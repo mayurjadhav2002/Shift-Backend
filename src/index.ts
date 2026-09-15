@@ -8,6 +8,7 @@ import { resolvers } from "./graphql/resolvers";
 import { getUserContext, MyContext } from "./middleware/auth";
 import { createServer } from "http";
 import { setupSocketServer } from "./socket";
+import contactRouter from "./routes/contact";
 
 const startServer = async () => {
   const app = express();
@@ -29,6 +30,9 @@ const startServer = async () => {
         getUserContext(req.headers.authorization),
     }),
   );
+
+  // REST routes
+  app.use("/api/contact", contactRouter);
 
   app.get("/", (req: any, res: any) => {
     res.json({ message: "Hello from Shift Backend!" });

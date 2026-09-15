@@ -24,7 +24,7 @@ exports.matchResolvers = {
             }
             const user = await prisma_1.default.user.findUnique({
                 where: { id: context.userId },
-                select: { isPremium: true }
+                select: { isPremium: true },
             });
             const limit = args.limit || 20;
             const messages = await prisma_1.default.message.findMany({
@@ -32,20 +32,20 @@ exports.matchResolvers = {
                 skip: args.cursor ? 1 : 0,
                 cursor: args.cursor ? { id: args.cursor } : undefined,
                 where: { matchId: args.matchId },
-                orderBy: { createdAt: "desc" }
+                orderBy: { createdAt: "desc" },
             });
-            return messages.map(msg => {
+            return messages.map((msg) => {
                 if (msg.senderId !== context.userId) {
                     return {
                         ...msg,
-                        isRevealed: false
+                        isRevealed: false,
                     };
                 }
                 const canSeeReceipt = user?.isPremium || msg.isRevealed;
                 return {
                     ...msg,
                     isRead: canSeeReceipt ? msg.isRead : false,
-                    isRevealed: Boolean(msg.isRevealed)
+                    isRevealed: Boolean(msg.isRevealed),
                 };
             });
         },
@@ -58,10 +58,7 @@ exports.matchResolvers = {
                         { OR: [{ user1Id: context.userId }, { user2Id: context.userId }] },
                         { isUnmatched: false },
                         {
-                            OR: [
-                                { dmStatus: null },
-                                { dmStatus: { not: "REJECTED" } },
-                            ],
+                            OR: [{ dmStatus: null }, { dmStatus: { not: "REJECTED" } }],
                         },
                     ],
                 },
@@ -70,22 +67,22 @@ exports.matchResolvers = {
                     user2: true,
                     messages: {
                         orderBy: { createdAt: "desc" },
-                        take: 1
+                        take: 1,
                     },
                     _count: {
                         select: {
                             messages: {
                                 where: {
                                     senderId: { not: context.userId },
-                                    isRead: false
-                                }
-                            }
-                        }
-                    }
+                                    isRead: false,
+                                },
+                            },
+                        },
+                    },
                 },
-                orderBy: { updatedAt: "desc" }
+                orderBy: { updatedAt: "desc" },
             });
-            return matches.map(match => {
+            return matches.map((match) => {
                 const matchedUser = match.user1Id === context.userId ? match.user2 : match.user1;
                 return {
                     id: match.id,
@@ -143,7 +140,9 @@ exports.matchResolvers = {
                     where: { id: context.userId },
                     select: { tokens: true, superlikeTokens: true },
                 });
-                const currentBalance = tokenFieldToDeduct === "superlikeTokens" ? user?.superlikeTokens : user?.tokens;
+                const currentBalance = tokenFieldToDeduct === "superlikeTokens"
+                    ? user?.superlikeTokens
+                    : user?.tokens;
                 if (!user || currentBalance === undefined || currentBalance < cost) {
                     throw new Error("Insufficient tokens");
                 }
@@ -178,8 +177,8 @@ exports.matchResolvers = {
                             user2Id: args.swipedId,
                         },
                     });
-                    await (0, notifications_1.sendNotification)(context.userId, "New Match!", "You have a new match!");
-                    await (0, notifications_1.sendNotification)(args.swipedId, "New Match!", "You have a new match!");
+                    await (0, notifications_1.sendNotification)(context.userId, "New Match!", "You have a new match!", "MATCH");
+                    await (0, notifications_1.sendNotification)(args.swipedId, "New Match!", "You have a new match!", "MATCH");
                     // Notify sockets
                     try {
                         const { getIO } = require("../../socket");
@@ -192,24 +191,31 @@ exports.matchResolvers = {
                     }
                 }
             }
+            else {
+                // Not a mutual match yet, so this is a new request for swipedId
+                const text = args.type === "SUPERLIKE"
+                    ? "Someone superliked you! 🌟"
+                    : "Someone liked your profile! ❤️";
+                await (0, notifications_1.sendNotification)(args.swipedId, "New Request", text, "REQUEST");
+            }
             const updatedUser = await prisma_1.default.user.findUnique({
-                where: { id: context.userId }
+                where: { id: context.userId },
             });
             return {
                 match,
-                user: updatedUser
+                user: updatedUser,
             };
         },
         revealMessageStatus: async (_, args, context) => {
             if (!context.userId)
                 throw new Error("Not Authenticated");
             const message = await prisma_1.default.message.findUnique({
-                where: { id: args.messageId }
+                where: { id: args.messageId },
             });
             if (!message)
                 throw new Error("Message not found");
             const user = await prisma_1.default.user.findUnique({
-                where: { id: context.userId }
+                where: { id: context.userId },
             });
             if (!user)
                 throw new Error("User not found");
@@ -221,18 +227,18 @@ exports.matchResolvers = {
                 await prisma_1.default.$transaction([
                     prisma_1.default.user.update({
                         where: { id: context.userId },
-                        data: { tokens: { decrement: 5 } }
+                        data: { tokens: { decrement: 5 } },
                     }),
                     prisma_1.default.message.update({
                         where: { id: args.messageId },
-                        data: { isRevealed: true }
-                    })
+                        data: { isRevealed: true },
+                    }),
                 ]);
             }
             else if (!message.isRevealed) {
                 await prisma_1.default.message.update({
                     where: { id: args.messageId },
-                    data: { isRevealed: true }
+                    data: { isRevealed: true },
                 });
             }
             return message.isRead || false;
@@ -240,19 +246,22 @@ exports.matchResolvers = {
         markChatAsRead: async (_, args, context) => {
             if (!context.userId)
                 throw new Error("Not Authenticated");
-            const match = await prisma_1.default.match.findUnique({ where: { id: args.matchId } });
-            if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+            const match = await prisma_1.default.match.findUnique({
+                where: { id: args.matchId },
+            });
+            if (!match ||
+                (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
                 throw new Error("Match not found or not authorized");
             }
             await prisma_1.default.message.updateMany({
                 where: {
                     matchId: args.matchId,
                     senderId: { not: context.userId },
-                    isRead: false
+                    isRead: false,
                 },
                 data: {
-                    isRead: true
-                }
+                    isRead: true,
+                },
             });
             return true;
         },
@@ -347,7 +356,9 @@ exports.matchResolvers = {
             catch (err) {
                 console.error("Error upserting swipe for Direct DM", err);
             }
-            await (0, notifications_1.sendNotification)(args.targetUserId, "New Direct Message! 💌", args.content ? `${args.content}` : "Someone sent you a direct chat request!");
+            await (0, notifications_1.sendNotification)(args.targetUserId, "New Direct Message! 💌", args.content
+                ? `${args.content}`
+                : "Someone sent you a direct chat request!", "MESSAGE");
             try {
                 const { getIO } = require("../../socket");
                 const io = getIO();
@@ -374,8 +385,11 @@ exports.matchResolvers = {
         acceptDirectDM: async (_, args, context) => {
             if (!context.userId)
                 throw new Error("Not Authenticated");
-            const match = await prisma_1.default.match.findUnique({ where: { id: args.matchId } });
-            if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+            const match = await prisma_1.default.match.findUnique({
+                where: { id: args.matchId },
+            });
+            if (!match ||
+                (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
                 throw new Error("Match not found or not authorized");
             }
             const updatedMatch = await prisma_1.default.match.update({
@@ -388,7 +402,9 @@ exports.matchResolvers = {
             try {
                 const { getIO } = require("../../socket");
                 const io = getIO();
-                io.to(`user_${match.user1Id}`).to(`user_${match.user2Id}`).emit("dm_updated", { matchId: args.matchId, dmStatus: "ACCEPTED" });
+                io.to(`user_${match.user1Id}`)
+                    .to(`user_${match.user2Id}`)
+                    .emit("dm_updated", { matchId: args.matchId, dmStatus: "ACCEPTED" });
             }
             catch (e) {
                 console.error("Socket error on acceptDirectDM", e);
@@ -398,8 +414,11 @@ exports.matchResolvers = {
         rejectDirectDM: async (_, args, context) => {
             if (!context.userId)
                 throw new Error("Not Authenticated");
-            const match = await prisma_1.default.match.findUnique({ where: { id: args.matchId } });
-            if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+            const match = await prisma_1.default.match.findUnique({
+                where: { id: args.matchId },
+            });
+            if (!match ||
+                (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
                 throw new Error("Match not found or not authorized");
             }
             await prisma_1.default.match.update({
@@ -417,7 +436,13 @@ exports.matchResolvers = {
             try {
                 const { getIO } = require("../../socket");
                 const io = getIO();
-                io.to(`user_${match.user1Id}`).to(`user_${match.user2Id}`).emit("dm_updated", { matchId: args.matchId, dmStatus: "REJECTED", isUnmatched: true });
+                io.to(`user_${match.user1Id}`)
+                    .to(`user_${match.user2Id}`)
+                    .emit("dm_updated", {
+                    matchId: args.matchId,
+                    dmStatus: "REJECTED",
+                    isUnmatched: true,
+                });
             }
             catch (e) {
                 console.error("Socket error on rejectDirectDM", e);

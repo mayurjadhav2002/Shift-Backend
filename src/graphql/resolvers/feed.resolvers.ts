@@ -78,7 +78,12 @@ export const feedResolvers = {
       const offset = args.offset || 0;
       users = users.slice(offset, offset + limit);
 
-      return users;
+      return users.map((u: any) => {
+        if (u.prompts && typeof u.prompts === "object") {
+          return { ...u, prompts: JSON.stringify(u.prompts) };
+        }
+        return u;
+      });
     },
     getRequests: async (_: any, __: any, context: MyContext) => {
       if (!context.userId) {
@@ -152,7 +157,12 @@ export const feedResolvers = {
       });
 
       // Maintain sorted order
-      const usersMap = new Map(users.map((u) => [u.id, u]));
+      const usersMap = new Map(users.map((u) => {
+        if (u.prompts && typeof u.prompts === "object") {
+          return [u.id, { ...u, prompts: JSON.stringify(u.prompts) }];
+        }
+        return [u.id, u];
+      }));
       return validSwiperIds.map((id) => usersMap.get(id)).filter(Boolean);
     },
     getPendingRequestsCount: async (_: any, __: any, context: MyContext) => {

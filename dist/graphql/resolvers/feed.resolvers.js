@@ -5,6 +5,18 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.feedResolvers = void 0;
 const prisma_1 = __importDefault(require("../../utils/prisma"));
+function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // km
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat1 * Math.PI) / 180) *
+            Math.cos((lat2 * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+}
 exports.feedResolvers = {
     Query: {
         getFeed: async (_, args, context) => {
@@ -33,12 +45,31 @@ exports.feedResolvers = {
             if (currentUser?.isPremium && currentUser?.preferredCountry && currentUser.preferredCountry !== "All") {
                 whereClause.country = currentUser.preferredCountry;
             }
-            const users = await prisma_1.default.user.findMany({
+            let users = await prisma_1.default.user.findMany({
                 where: whereClause,
-                take: args.limit || 20,
-                skip: args.offset || 0,
             });
-            return users;
+            if (currentUser?.latitude && currentUser?.longitude) {
+                users = users.filter((u) => {
+                    if (!u.latitude || !u.longitude)
+                        return false;
+                    const dist = getDistance(currentUser.latitude, currentUser.longitude, u.latitude, u.longitude);
+                    return dist <= 100; // 100km radius
+                });
+                users.sort((a, b) => {
+                    const distA = getDistance(currentUser.latitude, currentUser.longitude, a.latitude, a.longitude);
+                    const distB = getDistance(currentUser.latitude, currentUser.longitude, b.latitude, b.longitude);
+                    return distA - distB;
+                });
+            }
+            const limit = args.limit || 20;
+            const offset = args.offset || 0;
+            users = users.slice(offset, offset + limit);
+            return users.map((u) => {
+                if (u.prompts && typeof u.prompts === "object") {
+                    return { ...u, prompts: JSON.stringify(u.prompts) };
+                }
+                return u;
+            });
         },
         getRequests: async (_, __, context) => {
             if (!context.userId) {
@@ -98,7 +129,12 @@ exports.feedResolvers = {
                 },
             });
             // Maintain sorted order
-            const usersMap = new Map(users.map((u) => [u.id, u]));
+            const usersMap = new Map(users.map((u) => {
+                if (u.prompts && typeof u.prompts === "object") {
+                    return [u.id, { ...u, prompts: JSON.stringify(u.prompts) }];
+                }
+                return [u.id, u];
+            }));
             return validSwiperIds.map((id) => usersMap.get(id)).filter(Boolean);
         },
         getPendingRequestsCount: async (_, __, context) => {

@@ -255,3 +255,22 @@ model PurchaseTransaction {
   status          String   @default("VERIFIED")
   createdAt       DateTime @default(now())
 }
+
+enum ContactQueryType {
+  GENERAL
+  BUG_REPORT
+  FEATURE_REQUEST
+  ACCOUNT_ISSUE
+  BILLING
+  OTHER
+}
+
+model ContactSubmission {
+  id          String           @id @default(uuid())
+  name        String
+  email       String
+  queryType   ContactQueryType
+  message     String
+  ipAddress   String?
+  createdAt   DateTime         @default(now())
+}

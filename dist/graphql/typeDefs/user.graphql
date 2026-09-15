@@ -31,6 +31,11 @@ type User {
   twitter: String
   showSocials: Boolean
 
+  fcmToken: String
+  pushNewMessages: Boolean
+  pushNewMatches: Boolean
+  pushRequests: Boolean
+
   createdAt: String
   updatedAt: String
   lastActive: String
@@ -99,6 +104,7 @@ type AuthPayload {
 
 type Mutation {
   loginWithGoogle(idToken: String!): AuthPayload!
+  login(email: String!, password: String!): AuthPayload!
   createUser(email: String!, password: String!, name: String!): AuthPayload!
   signUp(email: String!, password: String!, name: String!): AuthPayload!
   updateUser(
@@ -139,6 +145,9 @@ type Mutation {
   deleteAccount: User!
   addTokens(amount: Int!): User!
   claimDailyReward: User!
+
+  updateLocation(latitude: Float!, longitude: Float!): User!
+  updateNotificationSettings(pushNewMessages: Boolean, pushNewMatches: Boolean, pushRequests: Boolean, fcmToken: String): User!
 
   deleteUser(id: ID!): User!
   uploadPhoto(base64: String!): String!
