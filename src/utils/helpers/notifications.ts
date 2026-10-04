@@ -1,14 +1,21 @@
 import prisma from "@/utils/prisma";
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
+import fs from "fs";
+import path from "path";
 
 // Initialize Firebase Admin SDK if not already initialized
 const apps = getApps();
 if (!apps.length) {
   try {
-    // In production, you would use a service account key file or environment variables
-    // For now, we will just stub it if credentials are not provided
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    const serviceAccountPath = path.resolve(process.cwd(), ".secrets/firebase_config.json");
+    
+    if (fs.existsSync(serviceAccountPath)) {
+      const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf-8"));
+      initializeApp({
+        credential: cert(serviceAccount),
+      });
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
       initializeApp({
         credential: cert(
           JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY),
@@ -16,7 +23,7 @@ if (!apps.length) {
       });
     } else {
       console.warn(
-        "FIREBASE_SERVICE_ACCOUNT_KEY is not set. Push notifications will be mocked.",
+        "Firebase credentials not found (.secrets/firebase_config.json or FIREBASE_SERVICE_ACCOUNT_KEY environment variable). Push notifications will be mocked.",
       );
     }
   } catch (error) {
