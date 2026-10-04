@@ -271,7 +271,11 @@ export const userResolvers = {
         preferredCountry?: string;
         isPaused?: boolean;
       },
+      context: MyContext,
     ) => {
+      if (!context.userId || context.userId !== args.id) {
+        throw new Error("Not Authorized to update this profile");
+      }
       if (args.preferredCountry !== undefined && args.preferredCountry !== "All") {
         const existing = await prisma.user.findUnique({ where: { id: args.id } });
         if (existing && !existing.isPremium && args.preferredCountry !== existing.country) {
@@ -348,7 +352,10 @@ export const userResolvers = {
 
       return user;
     },
-    deleteUser: async (_: any, args: { id: string }) => {
+    deleteUser: async (_: any, args: { id: string }, context: MyContext) => {
+      if (!context.userId || context.userId !== args.id) {
+        throw new Error("Not Authorized to delete this profile");
+      }
       return await prisma.user.delete({
         where: { id: args.id },
       });

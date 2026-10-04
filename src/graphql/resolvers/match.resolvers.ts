@@ -132,6 +132,11 @@ export const matchResolvers = {
         throw new Error("Not Authenticated");
       }
 
+      const match = await prisma.match.findUnique({ where: { id: args.id } });
+      if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+        throw new Error("Match not found or not authorized");
+      }
+
       return await prisma.match.update({
         where: { id: args.id },
         data: {
@@ -264,6 +269,11 @@ export const matchResolvers = {
       });
 
       if (!message) throw new Error("Message not found");
+
+      const match = await prisma.match.findUnique({ where: { id: message.matchId } });
+      if (!match || (match.user1Id !== context.userId && match.user2Id !== context.userId)) {
+        throw new Error("Not authorized to view this message");
+      }
 
       const user = await prisma.user.findUnique({
         where: { id: context.userId },
